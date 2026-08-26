@@ -3,6 +3,7 @@ import { AppConfigUtil, DeepPartial, IAppConfig } from './config';
 
 export default {
   Port: AppConfigUtil.getInt('PORT', 3000),
+  CorsOrigin: process.env.CORS_ORIGIN,
   Database: {
     host: process.env.DATABASE_HOST,
     port: AppConfigUtil.getInt('DATABASE_PORT', 5432),

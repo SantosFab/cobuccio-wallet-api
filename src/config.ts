@@ -58,6 +58,9 @@ export function deepMergeConfig<T extends Record<string, unknown>>(
 // overrides only what actually differs for that environment.
 export const AppConfig = {
   Port: 3000,
+  // Origin allowed to call the API from the browser (the web app's own
+  // URL, not the API's) — needed because CORS is off by default in Nest.
+  CorsOrigin: 'http://localhost:3000',
   Database: {
     type: 'postgres' as const,
     host: 'localhost',

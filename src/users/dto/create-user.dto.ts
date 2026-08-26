@@ -25,7 +25,11 @@ export class CreateUserDto {
   @IsCpf()
   cpf: string;
 
-  @Matches(/^\d{10,11}$/, { message: 'phone must contain 10 or 11 digits' })
+  // Mobile numbers only (DDD + 9 digits, always starting with 9) —
+  // landlines are out of scope.
+  @Matches(/^\d{2}9\d{8}$/, {
+    message: 'phone must be a valid mobile number (DDD + 9 digits)',
+  })
   phone: string;
 
   @ValidateNested()
