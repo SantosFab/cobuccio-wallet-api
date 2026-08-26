@@ -1,0 +1,55 @@
+services:
+    postgres:
+        image: postgres:18-alpine
+        init: true
+        restart: unless-stopped
+        hostname: "postgres"
+        environment:
+            POSTGRES_USER: ${DATABASE_USERNAME-}
+            POSTGRES_DB: ${DATABASE_NAME-}
+            POSTGRES_PASSWORD: ${DATABASE_PASSWORD-}
+            PGPASSWORD: ${DATABASE_PASSWORD-}
+        ports:
+            # Exposed to the host only
+            - "127.0.0.1:${DOCKER_DB_PORT:-5432}:5432"
+        volumes:
+            # Postgres 18+ images store data directly under /var/lib/postgresql
+            # (no more .../data suffix), to stay compatible with pg_ctlcluster.
+            - "db-data:/var/lib/postgresql"
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME-} -d ${DATABASE_NAME-}"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+
+    api: &api-service
+        restart: unless-stopped
+        build:
+            target: final
+            args:
+                - NODE_VERSION=${NODE_VERSION}
+        hostname: "api"
+        env_file:
+            - "./.env"
+        ports:
+            - "${DOCKER_API_PORT:-4000}:3000"
+        depends_on:
+            postgres:
+                condition: service_healthy
+        volumes:
+            - "api-log-data:/app/logs"
+
+    api-dev:
+        <<: *api-service
+        build:
+            target: dev
+            args:
+                - NODE_VERSION=${NODE_VERSION}
+        volumes:
+            - "api-log-data:/app/logs"
+            - "./:/app"
+
+volumes:
+    db-data:
+    api-log-data:

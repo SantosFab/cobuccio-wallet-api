@@ -54,3 +54,11 @@ pids
 
 # Diagnostic reports
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# AI Agents
+CLAUDE.md
+
+# Docker / make versions helper
+.version
+.env-e
+
