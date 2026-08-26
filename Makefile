@@ -65,6 +65,26 @@ psql: check-docker versions ## Connects to Postgres via psql
 	@$(eval DATABASE_CONTAINER_ID := $(shell ${DOCKER_CMD} ps -f name=${COMPOSE_PROJECT_NAME} --format "{{.Names}}" | grep postgres))
 	@${DOCKER_CMD} exec -it ${DATABASE_CONTAINER_ID} psql -U ${DATABASE_USERNAME} -d ${DATABASE_NAME}
 
+## --- Migrations ---
+## These run yarn/ts-node directly on the host (like `make install`), not
+## inside Docker. The .env value for DATABASE_HOST ("postgres") only
+## resolves inside the compose network, so it's overridden below — but
+## via its own variable (not DATABASE_HOST itself), so it doesn't affect
+## any other target, and so it can be pointed elsewhere (CI, a deployed
+## environment) without editing this file, e.g.:
+##   make migration-run MIGRATION_DATABASE_HOST=my-prod-db.example.com
+## Requires `make database` to be running first when using the default.
+MIGRATION_DATABASE_HOST ?= 127.0.0.1
+
+migration-generate: versions ## Generates a migration by diffing entities against the database. Usage: make migration-generate NAME=CreateUsers
+	@DATABASE_HOST=$(MIGRATION_DATABASE_HOST) yarn migration:generate src/migrations/$(NAME)
+
+migration-run: versions ## Runs pending migrations
+	@DATABASE_HOST=$(MIGRATION_DATABASE_HOST) yarn migration:run
+
+migration-revert: versions ## Reverts the last migration
+	@DATABASE_HOST=$(MIGRATION_DATABASE_HOST) yarn migration:revert
+
 ## --- Dependencies ---
 
 install: ## Installs project dependencies locally (yarn, outside Docker)

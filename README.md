@@ -20,6 +20,11 @@ $ make database              # starts only the Postgres container
 $ make stop-database         # stops the Postgres container
 $ make psql                  # connects to Postgres via psql
 
+# migrations (run yarn/ts-node on the host, not inside Docker — requires `make database` to be running)
+$ make migration-generate NAME=CreateUsers   # generates a migration by diffing entities against the database
+$ make migration-run                         # runs pending migrations
+$ make migration-revert                      # reverts the last migration
+
 # dependencies
 $ make install                # installs project dependencies locally (yarn, outside Docker)
 
@@ -59,6 +64,40 @@ $ yarn start:dev
 # production mode
 $ yarn start:prod
 ```
+
+## API
+
+### `POST /users` — sign up
+
+Creates a user and its address in a single database transaction (if either insert fails, both are rolled back). CPF is validated server-side (checksum digits, not just format) regardless of what the client already validated. Email and CPF must be unique; the password is hashed with argon2id and is never returned.
+
+Request body:
+
+```json
+{
+  "name": "Ana Silva",
+  "email": "ana@example.com",
+  "cpf": "52998224725",
+  "phone": "11987654321",
+  "address": {
+    "zipCode": "01310100",
+    "street": "Avenida Paulista",
+    "number": "1000",
+    "complement": "Apto 42",
+    "neighborhood": "Bela Vista",
+    "city": "São Paulo",
+    "state": "SP"
+  },
+  "monthlyIncome": 3500,
+  "password": "Senha123"
+}
+```
+
+Responses:
+
+- `201 Created` — the created user (`id`, `name`, `email`, `cpf`, `phone`, `monthlyIncome`, timestamps). Never includes the password.
+- `400 Bad Request` — validation error (invalid CPF, weak password, invalid UF, unknown field, etc.), e.g. `{ "statusCode": 400, "message": ["cpf must be a valid CPF number"], "error": "Bad Request" }`.
+- `409 Conflict` — email or CPF already registered, e.g. `{ "statusCode": 409, "code": "EMAIL_ALREADY_REGISTERED", "message": "This email is already registered" }` (`code` is also `CPF_ALREADY_REGISTERED`).
 
 ## Run tests
 
