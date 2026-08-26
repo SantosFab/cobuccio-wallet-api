@@ -16,4 +16,13 @@ export default {
       ? { ssl: { rejectUnauthorized: true } }
       : {}),
   },
+  Auth: {
+    jwtSecret: process.env.JWT_SECRET,
+    // Lifetimes are a security/product decision, not something that
+    // varies by deploy environment — left as plain constants in
+    // config.ts's AppConfig.Auth instead of env vars.
+    cookieSecure: process.env.COOKIE_SECURE === 'true',
+    cookieSameSite: (process.env.COOKIE_SAME_SITE ?? 'lax') as
+      'lax' | 'none' | 'strict',
+  },
 } satisfies DeepPartial<IAppConfig>;

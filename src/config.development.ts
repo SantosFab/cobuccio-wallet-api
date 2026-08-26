@@ -14,4 +14,13 @@ export default {
     password: process.env.DATABASE_PASSWORD,
     database: process.env.DATABASE_NAME,
   },
+  Auth: {
+    jwtSecret: process.env.JWT_SECRET,
+    // Lifetimes are a security/product decision, not something that
+    // varies by deploy environment — left as plain constants in
+    // config.ts's AppConfig.Auth instead of env vars.
+    cookieSecure: process.env.COOKIE_SECURE === 'true',
+    cookieSameSite: (process.env.COOKIE_SAME_SITE ?? 'lax') as
+      'lax' | 'none' | 'strict',
+  },
 } satisfies DeepPartial<IAppConfig>;

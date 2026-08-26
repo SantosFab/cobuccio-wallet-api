@@ -125,4 +125,23 @@ export class UsersService {
       throw error;
     }
   }
+
+  // `password` has `select: false` on the entity, so it's left out of every
+  // normal query by default — this explicitly asks for it back, needed
+  // only for the login flow's credential check.
+  async findByEmailWithPassword(email: string): Promise<User | null> {
+    return this.usersRepository
+      .createQueryBuilder('user')
+      .addSelect('user.password')
+      .where('user.email = :email', { email })
+      .getOne();
+  }
+
+  async findById(id: string): Promise<SafeUser | null> {
+    const user = await this.usersRepository.findOne({ where: { id } });
+    if (!user) return null;
+
+    const { password, ...safeUser } = user;
+    return safeUser;
+  }
 }

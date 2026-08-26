@@ -1,3 +1,10 @@
+// Named so a duration reads as "7 * SECONDS_PER_DAY" instead of the
+// unexplained literal "604800" — used both as the AppConfig defaults below
+// and as the fallback passed to AppConfigUtil.getInt() in config.<env>.ts,
+// so the same number is never typed out twice.
+export const SECONDS_PER_MINUTE = 60;
+export const SECONDS_PER_DAY = 60 * 60 * 24;
+
 export type IAppConfig = typeof AppConfig;
 
 export const AppConfigUtil = {
@@ -75,5 +82,19 @@ export const AppConfig = {
     // to target instead of adding one `satisfies DeepPartial<IAppConfig>`
     // would otherwise reject as unknown.
     ssl: undefined as { rejectUnauthorized: boolean } | undefined,
+  },
+  Auth: {
+    // No real default here on purpose — loadEnvironmentConfig() in
+    // app.module.ts refuses to boot if JWT_SECRET isn't set, so this
+    // value is only ever `undefined` as a type placeholder, never at
+    // runtime.
+    jwtSecret: undefined as string | undefined,
+    jwtAccessTokenLifetime: 15 * SECONDS_PER_MINUTE,
+    // Absolute cap from login, unaffected by how often the session refreshes.
+    jwtRefreshTokenLifetime: 7 * SECONDS_PER_DAY,
+    // Logs the session out early if it goes unused this long.
+    refreshInactivityLifetime: 3 * SECONDS_PER_DAY,
+    cookieSecure: false,
+    cookieSameSite: 'lax' as 'lax' | 'none' | 'strict',
   },
 };

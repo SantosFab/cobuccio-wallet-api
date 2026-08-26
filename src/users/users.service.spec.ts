@@ -63,6 +63,7 @@ describe('UsersService', () => {
           provide: getRepositoryToken(User),
           useValue: {
             findOne: jest.fn(),
+            createQueryBuilder: jest.fn(),
           },
         },
         { provide: DataSource, useValue: dataSource },
@@ -119,6 +120,56 @@ describe('UsersService', () => {
     );
     await expect(service.create(buildDto())).rejects.toMatchObject({
       response: { code: 'EMAIL_ALREADY_REGISTERED' },
+    });
+  });
+
+  describe('findByEmailWithPassword', () => {
+    it('explicitly re-selects the password column, which is select:false by default', async () => {
+      const queryBuilder = {
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue({
+          id: 'user-1',
+          email: 'ana@example.com',
+          password: 'hashed-password',
+        }),
+      };
+      repository.createQueryBuilder.mockReturnValue(
+        queryBuilder as unknown as ReturnType<
+          Repository<User>['createQueryBuilder']
+        >,
+      );
+
+      const result = await service.findByEmailWithPassword('ana@example.com');
+
+      expect(queryBuilder.addSelect).toHaveBeenCalledWith('user.password');
+      expect(queryBuilder.where).toHaveBeenCalledWith('user.email = :email', {
+        email: 'ana@example.com',
+      });
+      expect(result).toMatchObject({ password: 'hashed-password' });
+    });
+  });
+
+  describe('findById', () => {
+    it('returns the user without the password field', async () => {
+      repository.findOne.mockResolvedValue({
+        id: 'user-1',
+        email: 'ana@example.com',
+        password: 'hashed-password',
+      } as User);
+
+      const result = await service.findById('user-1');
+
+      expect(result).not.toHaveProperty('password');
+      expect(result?.email).toBe('ana@example.com');
+    });
+
+    it('returns null when the user does not exist', async () => {
+      repository.findOne.mockResolvedValue(null);
+
+      const result = await service.findById('missing-id');
+
+      expect(result).toBeNull();
     });
   });
 });

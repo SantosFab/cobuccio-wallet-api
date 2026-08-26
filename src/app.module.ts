@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import { AppConfig, deepMergeConfig, DeepPartial, IAppConfig } from './config';
 import { UsersModule } from './users/users.module';
 
@@ -16,6 +17,14 @@ function loadEnvironmentConfig(): DeepPartial<IAppConfig> {
   ) as {
     default: DeepPartial<IAppConfig>;
   };
+
+  // Fail fast instead of falling back to a hardcoded secret — this runs
+  // before any other module (TypeORM, Auth) is instantiated.
+  if (!process.env.JWT_SECRET) {
+    throw new Error(
+      '[app-module] - JWT_SECRET must be set; refusing to start without it.',
+    );
+  }
 
   return environmentConfig.default;
 }
@@ -43,6 +52,7 @@ function loadEnvironmentConfig(): DeepPartial<IAppConfig> {
       }),
     }),
     UsersModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
