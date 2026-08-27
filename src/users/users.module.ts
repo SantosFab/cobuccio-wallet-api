@@ -2,10 +2,9 @@ import { BadRequestException, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MulterModule } from '@nestjs/platform-express';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { randomUUID } from 'crypto';
-import { diskStorage } from 'multer';
+import { memoryStorage } from 'multer';
 import { mkdirSync } from 'fs';
-import { extname, join } from 'path';
+import { join } from 'path';
 
 import { AuditModule } from '../audit/audit.module';
 import { MailModule } from '../mail/mail.module';
@@ -26,8 +25,10 @@ import { UsersService } from './users.service';
           'Uploads.avatarsDir',
           'uploads/avatars',
         );
-        const destination = join(process.cwd(), avatarsDir);
-        mkdirSync(destination, { recursive: true });
+        // Only needed so UsersService.updateAvatar has somewhere to write
+        // an already-validated file to — Multer itself never touches disk
+        // (see `storage` below).
+        mkdirSync(join(process.cwd(), avatarsDir), { recursive: true });
 
         const allowedMimeTypes = config.get<string[]>(
           'Uploads.allowedAvatarMimeTypes',
@@ -35,12 +36,13 @@ import { UsersService } from './users.service';
         );
 
         return {
-          storage: diskStorage({
-            destination,
-            filename: (_req, file, callback) => {
-              callback(null, `${randomUUID()}${extname(file.originalname)}`);
-            },
-          }),
+          // Buffers the upload in memory instead of writing it to disk.
+          // UsersService.updateAvatar checks the real file content (see
+          // image-signature.util.ts) against `file.buffer` and only
+          // writes it to disk once that check passes — an invalid or
+          // malicious upload never touches the filesystem, not even
+          // briefly.
+          storage: memoryStorage(),
           limits: {
             fileSize: config.get<number>(
               'Uploads.maxAvatarSizeBytes',

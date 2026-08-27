@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuditModule } from '../audit/audit.module';
@@ -37,10 +36,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
         };
       },
     }),
-    // Only used on POST /auth/login (see auth.controller.ts) — registered
-    // here, not as a global APP_GUARD, so it doesn't affect every other
-    // route without reason.
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 5 }]),
   ],
   controllers: [AuthController],
   providers: [

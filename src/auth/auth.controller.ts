@@ -9,9 +9,8 @@ import {
   Req,
   Res,
   UnauthorizedException,
-  UseGuards,
 } from '@nestjs/common';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 import { SafeUser, UsersService } from '../users/users.service';
@@ -50,8 +49,10 @@ export class AuthController {
     private readonly usersService: UsersService,
   ) {}
 
+  // Stricter than the global default (see ThrottlerModule in
+  // app.module.ts) — login is the one route worth protecting harder
+  // against brute-forcing credentials.
   @Public()
-  @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -72,8 +73,7 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResponseUser> {
     const oldRefreshToken = request.cookies?.[REFRESH_TOKEN_COOKIE] as
-      | string
-      | undefined;
+      string | undefined;
 
     if (!oldRefreshToken) {
       throw new UnauthorizedException({
@@ -94,8 +94,7 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
     const oldRefreshToken = request.cookies?.[REFRESH_TOKEN_COOKIE] as
-      | string
-      | undefined;
+      string | undefined;
 
     if (oldRefreshToken) {
       await this.authService.logout(oldRefreshToken);

@@ -1,8 +1,9 @@
 import { ConflictException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import * as argon2 from 'argon2';
-import { unlink } from 'fs/promises';
+import { unlink, writeFile } from 'fs/promises';
 import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
@@ -12,6 +13,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
 import { UsersService } from './users.service';
+import { matchesImageSignature } from './utils/image-signature.util';
 
 jest.mock('argon2', () => ({
   argon2id: 2,
@@ -21,6 +23,11 @@ jest.mock('argon2', () => ({
 
 jest.mock('fs/promises', () => ({
   unlink: jest.fn().mockResolvedValue(undefined),
+  writeFile: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('./utils/image-signature.util', () => ({
+  matchesImageSignature: jest.fn(),
 }));
 
 function buildDto(): CreateUserDto {
@@ -91,6 +98,14 @@ describe('UsersService', () => {
         { provide: DataSource, useValue: dataSource },
         { provide: AuditService, useValue: auditService },
         { provide: MailService, useValue: mailService },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn(
+              (_key: string, defaultValue?: unknown) => defaultValue,
+            ),
+          },
+        },
       ],
     }).compile();
 
@@ -99,6 +114,10 @@ describe('UsersService', () => {
 
     (argon2.hash as jest.Mock).mockResolvedValue('hashed-password');
     (unlink as jest.Mock).mockClear();
+    (writeFile as jest.Mock).mockClear();
+    // Most tests don't care about avatar content validation — only the
+    // `updateAvatar` tests that specifically exercise it override this.
+    (matchesImageSignature as jest.Mock).mockClear().mockReturnValue(true);
   });
 
   it('creates a user and its address in the same transaction, never returning the password', async () => {
@@ -299,7 +318,19 @@ describe('UsersService', () => {
   });
 
   describe('updateAvatar', () => {
-    it('deletes the previous avatar file and audits the change', async () => {
+    const fileBuffer = Buffer.from('fake-jpeg-bytes');
+
+    function buildUploadedFile(
+      overrides: Partial<Express.Multer.File> = {},
+    ): Express.Multer.File {
+      return {
+        mimetype: 'image/jpeg',
+        buffer: fileBuffer,
+        ...overrides,
+      } as Express.Multer.File;
+    }
+
+    it('validates content, writes the file, deletes the previous avatar and audits the change', async () => {
       repository.findOne
         .mockResolvedValueOnce({
           id: 'user-1',
@@ -307,16 +338,33 @@ describe('UsersService', () => {
         } as User)
         .mockResolvedValueOnce({
           id: 'user-1',
-          avatarUrl: '/uploads/avatars/new.jpg',
+          avatarUrl: '/uploads/avatars/new-generated.jpg',
         } as User);
 
-      await service.updateAvatar('user-1', '/uploads/avatars/new.jpg');
+      await service.updateAvatar('user-1', buildUploadedFile());
+
+      expect(matchesImageSignature).toHaveBeenCalledWith(
+        fileBuffer,
+        'image/jpeg',
+      );
+
+      // The saved filename is generated internally (randomUUID + a safe
+      // extension derived from the mimetype), never predictable from the
+      // request — read back whatever writeFile actually received instead
+      // of guessing it, then use that same value to confirm the DB update
+      // and audit trail point at the exact file that was written.
+      const [writtenPath, writtenBuffer] = (writeFile as jest.Mock).mock
+        .calls[0] as [string, Buffer];
+      expect(writtenPath).toMatch(/uploads[/\\]avatars[/\\].+\.jpg$/);
+      expect(writtenBuffer).toBe(fileBuffer);
+      const generatedFilename = writtenPath.split(/[/\\]/).pop();
+      const expectedAvatarUrl = `/uploads/avatars/${generatedFilename}`;
 
       expect(unlink).toHaveBeenCalledWith(
         expect.stringContaining('/uploads/avatars/old.jpg'),
       );
       expect(repository.update).toHaveBeenCalledWith('user-1', {
-        avatarUrl: '/uploads/avatars/new.jpg',
+        avatarUrl: expectedAvatarUrl,
       });
       expect(auditService.record).toHaveBeenCalledWith({
         userId: 'user-1',
@@ -324,7 +372,7 @@ describe('UsersService', () => {
         metadata: {
           avatarUrl: {
             before: '/uploads/avatars/old.jpg',
-            after: '/uploads/avatars/new.jpg',
+            after: expectedAvatarUrl,
           },
         },
       });
@@ -335,20 +383,40 @@ describe('UsersService', () => {
         .mockResolvedValueOnce({ id: 'user-1', avatarUrl: null } as User)
         .mockResolvedValueOnce({
           id: 'user-1',
-          avatarUrl: '/uploads/avatars/new.jpg',
+          avatarUrl: '/uploads/avatars/new-generated.jpg',
         } as User);
 
-      await service.updateAvatar('user-1', '/uploads/avatars/new.jpg');
+      await service.updateAvatar('user-1', buildUploadedFile());
 
       expect(unlink).not.toHaveBeenCalled();
     });
 
-    it('rejects when the user does not exist', async () => {
+    it('rejects without ever writing to disk when the content does not match the declared mimetype', async () => {
+      repository.findOne.mockResolvedValueOnce({
+        id: 'user-1',
+        avatarUrl: null,
+      } as User);
+      (matchesImageSignature as jest.Mock).mockReturnValueOnce(false);
+
+      await expect(
+        service.updateAvatar('user-1', buildUploadedFile()),
+      ).rejects.toMatchObject({
+        response: { code: 'UNSUPPORTED_FILE_TYPE' },
+      });
+
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(unlink).not.toHaveBeenCalled();
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the user does not exist, without checking the file content', async () => {
       repository.findOne.mockResolvedValueOnce(null);
 
       await expect(
-        service.updateAvatar('missing-id', '/uploads/avatars/new.jpg'),
+        service.updateAvatar('missing-id', buildUploadedFile()),
       ).rejects.toThrow();
+
+      expect(matchesImageSignature).not.toHaveBeenCalled();
     });
   });
 

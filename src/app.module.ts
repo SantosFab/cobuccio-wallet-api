@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AppController } from './app.controller';
@@ -41,6 +43,10 @@ function loadEnvironmentConfig(): DeepPartial<IAppConfig> {
       // base fields that config.<env>.ts doesn't repeat.
       load: [() => deepMergeConfig(AppConfig, loadEnvironmentConfig())],
     }),
+    // Baseline abuse protection on every route (opt out per-route with
+    // @SkipThrottle() if ever needed) — POST /auth/login overrides this
+    // with a stricter limit of its own (see auth.controller.ts).
+    ThrottlerModule.forRoot([{ ttl: 30000, limit: 10 }]),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -57,6 +63,6 @@ function loadEnvironmentConfig(): DeepPartial<IAppConfig> {
     WalletsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

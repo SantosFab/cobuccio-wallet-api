@@ -6,9 +6,11 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
-import { unlink } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import { unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { DataSource, Repository } from 'typeorm';
 
@@ -20,6 +22,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Address } from './entities/address.entity';
 import { User } from './entities/user.entity';
+import { matchesImageSignature } from './utils/image-signature.util';
 import { Wallet } from '../wallets/entities/wallet.entity';
 
 interface PostgresUniqueViolationError {
@@ -40,6 +43,17 @@ function isUniqueViolation(
 
 export type SafeUser = Omit<User, 'password'>;
 
+// The saved extension must never come from the client-supplied filename
+// — that field is fully attacker-controlled and independent of the
+// already-validated mimetype (see matchesImageSignature). Mapping the
+// extension from the mimetype instead closes that gap. Keep this in sync
+// with Uploads.allowedAvatarMimeTypes.
+const AVATAR_MIME_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+};
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -49,6 +63,7 @@ export class UsersService {
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
+    private readonly configService: ConfigService,
   ) {}
 
   async create(dto: CreateUserDto): Promise<SafeUser> {
@@ -295,9 +310,39 @@ export class UsersService {
     return updated;
   }
 
-  async updateAvatar(userId: string, avatarUrl: string): Promise<SafeUser> {
+  async updateAvatar(
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<SafeUser> {
     const user = await this.usersRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException();
+
+    // Checked against the in-memory buffer (MulterModule uses
+    // memoryStorage — see users.module.ts) before a single byte reaches
+    // disk. fileFilter there only checked the client-declared mimetype
+    // header, which is spoofable; this confirms the actual bytes are a
+    // real image of that type, so an invalid or malicious upload is
+    // rejected without ever being written and needing cleanup.
+    const isRealImage = matchesImageSignature(file.buffer, file.mimetype);
+    if (!isRealImage) {
+      this.logger.warn(
+        '[users-service] - avatar upload rejected, content does not match declared type.',
+      );
+      throw new BadRequestException({
+        code: 'UNSUPPORTED_FILE_TYPE',
+        message: 'Unsupported file type',
+      });
+    }
+
+    const avatarsDir = this.configService.get<string>(
+      'Uploads.avatarsDir',
+      'uploads/avatars',
+    );
+    const extension = AVATAR_MIME_EXTENSIONS[file.mimetype] ?? '';
+    const filename = `${randomUUID()}${extension}`;
+    await writeFile(join(process.cwd(), avatarsDir, filename), file.buffer);
+
+    const avatarUrl = `/uploads/avatars/${filename}`;
 
     if (user.avatarUrl) await this.deleteAvatarFile(user.avatarUrl);
 

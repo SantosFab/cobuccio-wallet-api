@@ -70,8 +70,7 @@ export class UsersController {
       });
     }
 
-    const avatarUrl = `/uploads/avatars/${file.filename}`;
-    return this.usersService.updateAvatar(user.id, avatarUrl);
+    return this.usersService.updateAvatar(user.id, file);
   }
 
   @Delete('me/avatar')

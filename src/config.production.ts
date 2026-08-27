@@ -21,7 +21,10 @@ export default {
     // Lifetimes are a security/product decision, not something that
     // varies by deploy environment — left as plain constants in
     // config.ts's AppConfig.Auth instead of env vars.
-    cookieSecure: process.env.COOKIE_SECURE === 'true',
+    // Secure by default in production — an omitted COOKIE_SECURE must not
+    // silently downgrade the session cookies to plain HTTP. Set it to
+    // "false" explicitly (e.g. a temporary HTTP-only deploy) to opt out.
+    cookieSecure: process.env.COOKIE_SECURE !== 'false',
     cookieSameSite: (process.env.COOKIE_SAME_SITE ?? 'lax') as
       'lax' | 'none' | 'strict',
   },
