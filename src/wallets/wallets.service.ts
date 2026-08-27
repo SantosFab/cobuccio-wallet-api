@@ -413,7 +413,10 @@ export class WalletsService {
     return saved;
   }
 
-  async listTransactions(userId: string): Promise<WalletTransactionView[]> {
+  async listTransactions(
+    userId: string,
+    { limit, offset }: { limit: number; offset: number },
+  ): Promise<WalletTransactionView[]> {
     const wallet = await this.findWalletByUserIdOrFail(
       this.walletsRepository,
       userId,
@@ -422,6 +425,8 @@ export class WalletsService {
     const transactions = await this.transactionsRepository.find({
       where: [{ fromWalletId: wallet.id }, { toWalletId: wallet.id }],
       order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
     });
 
     const counterpartWalletIds = [

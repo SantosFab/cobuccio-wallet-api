@@ -7,11 +7,13 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { DepositDto } from './dto/deposit.dto';
+import { ListTransactionsQueryDto } from './dto/list-transactions-query.dto';
 import { TransferDto } from './dto/transfer.dto';
 import { WalletsService } from './wallets.service';
 
@@ -37,8 +39,14 @@ export class WalletsController {
   }
 
   @Get('transactions')
-  listTransactions(@CurrentUser() user: AuthenticatedUser) {
-    return this.walletsService.listTransactions(user.id);
+  listTransactions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: ListTransactionsQueryDto,
+  ) {
+    return this.walletsService.listTransactions(user.id, {
+      limit: query.limit,
+      offset: query.offset,
+    });
   }
 
   @Post('transactions/:id/reversal')
