@@ -65,6 +65,14 @@ psql: check-docker versions ## Connects to Postgres via psql
 	@$(eval DATABASE_CONTAINER_ID := $(shell ${DOCKER_CMD} ps -f name=${COMPOSE_PROJECT_NAME} --format "{{.Names}}" | grep postgres))
 	@${DOCKER_CMD} exec -it ${DATABASE_CONTAINER_ID} psql -U ${DATABASE_USERNAME} -d ${DATABASE_NAME}
 
+db-truncate: check-docker versions ## Deletes ALL DATA from every table, keeping the schema and migration history intact
+	@$(eval DATABASE_CONTAINER_ID := $(shell ${DOCKER_CMD} ps -f name=${COMPOSE_PROJECT_NAME} --format "{{.Names}}" | grep postgres))
+	@${DOCKER_CMD} exec -it ${DATABASE_CONTAINER_ID} psql -U ${DATABASE_USERNAME} -d ${DATABASE_NAME} -c "SELECT format('TRUNCATE TABLE %I RESTART IDENTITY CASCADE;', tablename) FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'migrations' \gexec"
+
+db-drop: check-docker versions ## Destroys EVERY table (including migration history), leaving the database empty and ready for `make migration-run`
+	@$(eval DATABASE_CONTAINER_ID := $(shell ${DOCKER_CMD} ps -f name=${COMPOSE_PROJECT_NAME} --format "{{.Names}}" | grep postgres))
+	@${DOCKER_CMD} exec -it ${DATABASE_CONTAINER_ID} psql -U ${DATABASE_USERNAME} -d ${DATABASE_NAME} -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO ${DATABASE_USERNAME}; GRANT ALL ON SCHEMA public TO public; CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+
 ## --- Migrations ---
 ## These run yarn/ts-node directly on the host (like `make install`), not
 ## inside Docker. The .env value for DATABASE_HOST ("postgres") only
