@@ -23,4 +23,14 @@ export default {
     cookieSameSite: (process.env.COOKIE_SAME_SITE ?? 'lax') as
       'lax' | 'none' | 'strict',
   },
+  Uploads: {
+    avatarsDir: process.env.UPLOADS_AVATARS_DIR,
+    maxAvatarSizeBytes: AppConfigUtil.getInt(
+      'UPLOAD_MAX_AVATAR_SIZE_BYTES',
+      2 * 1024 * 1024,
+    ),
+    allowedAvatarMimeTypes: process.env.UPLOAD_ALLOWED_AVATAR_MIME_TYPES?.split(
+      ',',
+    ),
+  },
 } satisfies DeepPartial<IAppConfig>;

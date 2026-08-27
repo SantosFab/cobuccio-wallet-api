@@ -5,6 +5,9 @@
 export enum UserEventType {
   // Users
   UserRegistered = 'user.registered',
+  ProfileUpdated = 'user.profile_updated',
+  AvatarUpdated = 'user.avatar_updated',
+  AvatarRemoved = 'user.avatar_removed',
 
   // Auth
   AuthLoginSucceeded = 'auth.login_succeeded',

@@ -35,6 +35,9 @@ export class User {
   @Column({ type: 'varchar', length: 255, select: false })
   password: string;
 
+  @Column({ name: 'avatar_url', type: 'varchar', length: 500, nullable: true })
+  avatarUrl: string | null;
+
   // Inverse side, no @JoinColumn — Address is the owning side and holds
   // the foreign key (address.user_id).
   @OneToOne(() => Address, (address) => address.user)

@@ -39,6 +39,7 @@ services:
                 condition: service_healthy
         volumes:
             - "api-log-data:/app/logs"
+            - "api-uploads-data:/app/uploads"
 
     api-dev:
         <<: *api-service
@@ -53,3 +54,4 @@ services:
 volumes:
     db-data:
     api-log-data:
+    api-uploads-data:

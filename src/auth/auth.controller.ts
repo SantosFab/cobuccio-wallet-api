@@ -24,14 +24,22 @@ import type { AuthenticatedUser } from './types/authenticated-user.type';
 
 // Never the whole SafeUser (which also carries cpf/phone/monthlyIncome/
 // address) — the session response only needs enough to greet the user.
+// avatarUrl is the one exception: it's not sensitive, and the header
+// needs it rendered on every page, not just when the profile menu opens.
 interface AuthResponseUser {
   id: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
 }
 
 function toAuthResponseUser(user: SafeUser): AuthResponseUser {
-  return { id: user.id, name: user.name, email: user.email };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+  };
 }
 
 @Controller('auth')

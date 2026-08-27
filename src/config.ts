@@ -97,4 +97,9 @@ export const AppConfig = {
     cookieSecure: false,
     cookieSameSite: 'lax' as 'lax' | 'none' | 'strict',
   },
+  Uploads: {
+    avatarsDir: 'uploads/avatars',
+    maxAvatarSizeBytes: 2 * 1024 * 1024,
+    allowedAvatarMimeTypes: ['image/jpeg', 'image/png', 'image/webp'] as string[],
+  },
 };

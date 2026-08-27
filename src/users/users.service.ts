@@ -1,11 +1,19 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
+import { unlink } from 'fs/promises';
+import { join } from 'path';
 import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { Address } from './entities/address.entity';
 import { User } from './entities/user.entity';
 import { Wallet } from '../wallets/entities/wallet.entity';
@@ -157,10 +165,165 @@ export class UsersService {
   }
 
   async findById(id: string): Promise<SafeUser | null> {
-    const user = await this.usersRepository.findOne({ where: { id } });
+    const user = await this.usersRepository.findOne({
+      where: { id },
+      relations: ['address'],
+    });
     if (!user) return null;
 
     const { password, ...safeUser } = user;
     return safeUser;
+  }
+
+  async update(userId: string, dto: UpdateUserDto): Promise<SafeUser> {
+    if (dto.email) {
+      const existingByEmail = await this.usersRepository.findOne({
+        where: { email: dto.email },
+      });
+      if (existingByEmail && existingByEmail.id !== userId) {
+        this.logger.warn(
+          '[users-service] - profile update rejected, email already registered.',
+        );
+        throw new ConflictException({
+          code: 'EMAIL_ALREADY_REGISTERED',
+          message: 'This email is already registered',
+        });
+      }
+    }
+
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const user = await manager.findOne(User, {
+          where: { id: userId },
+          relations: ['address'],
+        });
+        if (!user) throw new NotFoundException();
+
+        // Only fields whose value actually differs from what's already
+        // stored end up in the audit trail — resending the same email,
+        // for instance, shouldn't look like a change in the log.
+        const changes: Record<string, unknown> = {};
+
+        if (dto.email && dto.email !== user.email) {
+          changes.email = { before: user.email, after: dto.email };
+          user.email = dto.email;
+        }
+        if (dto.phone && dto.phone !== user.phone) {
+          changes.phone = { before: user.phone, after: dto.phone };
+          user.phone = dto.phone;
+        }
+        if (dto.monthlyIncome !== undefined) {
+          const newMonthlyIncome = dto.monthlyIncome.toFixed(2);
+          if (newMonthlyIncome !== user.monthlyIncome) {
+            changes.monthlyIncome = {
+              before: user.monthlyIncome,
+              after: newMonthlyIncome,
+            };
+            user.monthlyIncome = newMonthlyIncome;
+          }
+        }
+        await manager.save(user);
+
+        if (dto.address) {
+          const addressChanges: Record<string, unknown> = {};
+          const addressFields = [
+            'zipCode',
+            'street',
+            'number',
+            'complement',
+            'neighborhood',
+            'city',
+            'state',
+          ] as const;
+
+          for (const field of addressFields) {
+            const before = user.address?.[field] ?? null;
+            const after = dto.address[field] ?? null;
+            if (before !== after) addressChanges[field] = { before, after };
+          }
+          if (Object.keys(addressChanges).length > 0)
+            changes.address = addressChanges;
+
+          await manager.save(Address, { ...user.address, ...dto.address });
+        }
+
+        await this.auditService.record(
+          {
+            userId,
+            eventType: UserEventType.ProfileUpdated,
+            metadata: { changes },
+          },
+          manager,
+        );
+      });
+    } catch (error) {
+      // Same check-then-write race as create(): two concurrent updates
+      // could both pass the findOne check above before either UPDATE
+      // commits, so the database's unique constraint is the real guard.
+      if (isUniqueViolation(error)) {
+        this.logger.warn(
+          '[users-service] - profile update rejected by database unique constraint.',
+        );
+        throw new ConflictException({
+          code: 'EMAIL_ALREADY_REGISTERED',
+          message: 'This email is already registered',
+        });
+      }
+      throw error;
+    }
+
+    this.logger.log('[users-service] - profile updated successfully.');
+
+    const updated = await this.findById(userId);
+    if (!updated) throw new NotFoundException();
+    return updated;
+  }
+
+  async updateAvatar(userId: string, avatarUrl: string): Promise<SafeUser> {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException();
+
+    if (user.avatarUrl) await this.deleteAvatarFile(user.avatarUrl);
+
+    await this.usersRepository.update(userId, { avatarUrl });
+
+    await this.auditService.record({
+      userId,
+      eventType: UserEventType.AvatarUpdated,
+      metadata: { avatarUrl: { before: user.avatarUrl, after: avatarUrl } },
+    });
+
+    this.logger.log('[users-service] - avatar updated successfully.');
+
+    const updated = await this.findById(userId);
+    if (!updated) throw new NotFoundException();
+    return updated;
+  }
+
+  async removeAvatar(userId: string): Promise<SafeUser> {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException();
+
+    if (user.avatarUrl) await this.deleteAvatarFile(user.avatarUrl);
+
+    await this.usersRepository.update(userId, { avatarUrl: null });
+
+    await this.auditService.record({
+      userId,
+      eventType: UserEventType.AvatarRemoved,
+      metadata: { avatarUrl: { before: user.avatarUrl, after: null } },
+    });
+
+    this.logger.log('[users-service] - avatar removed successfully.');
+
+    const updated = await this.findById(userId);
+    if (!updated) throw new NotFoundException();
+    return updated;
+  }
+
+  // Best-effort cleanup — a file that fails to delete (already gone,
+  // permission issue) shouldn't block the caller's own update from saving.
+  private async deleteAvatarFile(avatarUrl: string): Promise<void> {
+    await unlink(join(process.cwd(), avatarUrl)).catch(() => {});
   }
 }

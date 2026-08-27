@@ -64,6 +64,7 @@ export class WalletsService {
 
     return this.dataSource.transaction(async (manager) => {
       const wallet = await this.lockWalletByUserId(manager, userId);
+      const balanceBefore = wallet.balance;
 
       wallet.balance = addAmounts(wallet.balance, amount);
       await manager.save(wallet);
@@ -81,7 +82,11 @@ export class WalletsService {
         {
           userId,
           eventType: UserEventType.WalletDepositCompleted,
-          metadata: { amount, transactionId: saved.id },
+          metadata: {
+            amount,
+            transactionId: saved.id,
+            balance: { before: balanceBefore, after: wallet.balance },
+          },
         },
         manager,
       );
@@ -145,6 +150,9 @@ export class WalletsService {
         });
       }
 
+      const senderBalanceBefore = senderWallet.balance;
+      const recipientBalanceBefore = recipientWallet.balance;
+
       senderWallet.balance = subtractAmounts(senderWallet.balance, amount);
       recipientWallet.balance = addAmounts(recipientWallet.balance, amount);
       await manager.save(senderWallet);
@@ -167,6 +175,11 @@ export class WalletsService {
             amount,
             transactionId: saved.id,
             recipientUserId: recipientUser.id,
+            senderBalance: { before: senderBalanceBefore, after: senderWallet.balance },
+            recipientBalance: {
+              before: recipientBalanceBefore,
+              after: recipientWallet.balance,
+            },
           },
         },
         manager,
@@ -248,13 +261,19 @@ export class WalletsService {
     userId: string,
     original: WalletTransaction,
   ): Promise<WalletTransaction> {
+    const statusBefore = original.status;
+    let balanceChanges: Record<string, unknown>;
+
     // No balance check here on purpose — a reversal corrects something
     // that already happened, so it's allowed to push a wallet negative
     // if the recipient already spent what they received.
     if (original.type === 'deposit') {
       const wallet = await this.lockWalletById(manager, original.toWalletId!);
+      const balanceBefore = wallet.balance;
       wallet.balance = subtractAmounts(wallet.balance, original.amount);
       await manager.save(wallet);
+
+      balanceChanges = { balance: { before: balanceBefore, after: wallet.balance } };
     } else {
       const [firstWalletId, secondWalletId] = [
         original.fromWalletId!,
@@ -267,6 +286,9 @@ export class WalletsService {
       const originalRecipientWallet =
         firstWalletId === original.fromWalletId ? secondWallet : firstWallet;
 
+      const senderBalanceBefore = originalSenderWallet.balance;
+      const recipientBalanceBefore = originalRecipientWallet.balance;
+
       originalSenderWallet.balance = addAmounts(
         originalSenderWallet.balance,
         original.amount,
@@ -277,6 +299,14 @@ export class WalletsService {
       );
       await manager.save(originalSenderWallet);
       await manager.save(originalRecipientWallet);
+
+      balanceChanges = {
+        senderBalance: { before: senderBalanceBefore, after: originalSenderWallet.balance },
+        recipientBalance: {
+          before: recipientBalanceBefore,
+          after: originalRecipientWallet.balance,
+        },
+      };
     }
 
     original.status = 'reversed';
@@ -299,6 +329,8 @@ export class WalletsService {
         metadata: {
           transactionId: original.id,
           reversalTransactionId: saved.id,
+          status: { before: statusBefore, after: original.status },
+          ...balanceChanges,
         },
       },
       manager,
