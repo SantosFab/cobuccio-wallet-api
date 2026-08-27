@@ -89,4 +89,20 @@ describe('MailService', () => {
       });
     });
   });
+
+  describe('sendPasswordChangedEmail', () => {
+    it('sends the password-changed template to the user', async () => {
+      await service.sendPasswordChangedEmail({
+        email: 'ana@example.com',
+        name: 'Ana Silva',
+      });
+
+      expect(mailerService.sendMail).toHaveBeenCalledWith({
+        to: 'ana@example.com',
+        subject: 'Sua senha foi alterada',
+        template: 'password-changed',
+        context: { name: 'Ana Silva' },
+      });
+    });
+  });
 });

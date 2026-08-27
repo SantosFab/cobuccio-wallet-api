@@ -12,7 +12,7 @@ import {
 import { IsCpf } from '../validators/is-cpf.validator';
 import { AddressDto } from './address.dto';
 
-const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
+export const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
 
 export class CreateUserDto {
   @IsString()

@@ -8,6 +8,7 @@ export enum UserEventType {
   ProfileUpdated = 'user.profile_updated',
   AvatarUpdated = 'user.avatar_updated',
   AvatarRemoved = 'user.avatar_removed',
+  PasswordChanged = 'user.password_changed',
 
   // Auth
   AuthLoginSucceeded = 'auth.login_succeeded',

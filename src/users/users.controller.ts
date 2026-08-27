@@ -17,6 +17,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { Public } from '../auth/decorators/public.decorator';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { SafeUser, UsersService } from './users.service';
@@ -45,6 +46,14 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
   ): Promise<SafeUser> {
     return this.usersService.update(user.id, dto);
+  }
+
+  @Patch('me/password')
+  changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ChangePasswordDto,
+  ): Promise<SafeUser> {
+    return this.usersService.changePassword(user.id, dto);
   }
 
   @Post('me/avatar')

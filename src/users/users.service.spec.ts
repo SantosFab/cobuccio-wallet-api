@@ -16,6 +16,7 @@ import { UsersService } from './users.service';
 jest.mock('argon2', () => ({
   argon2id: 2,
   hash: jest.fn(),
+  verify: jest.fn(),
 }));
 
 jest.mock('fs/promises', () => ({
@@ -47,7 +48,10 @@ describe('UsersService', () => {
   let dataSource: { transaction: jest.Mock };
   let manager: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
   let auditService: { record: jest.Mock };
-  let mailService: { sendWelcomeEmail: jest.Mock };
+  let mailService: {
+    sendWelcomeEmail: jest.Mock;
+    sendPasswordChangedEmail: jest.Mock;
+  };
 
   beforeEach(async () => {
     manager = {
@@ -68,7 +72,10 @@ describe('UsersService', () => {
       ),
     };
     auditService = { record: jest.fn() };
-    mailService = { sendWelcomeEmail: jest.fn().mockResolvedValue(undefined) };
+    mailService = {
+      sendWelcomeEmail: jest.fn().mockResolvedValue(undefined),
+      sendPasswordChangedEmail: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -375,6 +382,136 @@ describe('UsersService', () => {
       repository.findOne.mockResolvedValueOnce(null);
 
       await expect(service.removeAvatar('missing-id')).rejects.toThrow();
+    });
+  });
+
+  describe('changePassword', () => {
+    function mockUserWithPasswordQuery(user: Partial<User> | null) {
+      const queryBuilder = {
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(user),
+      };
+      repository.createQueryBuilder.mockReturnValue(
+        queryBuilder as unknown as ReturnType<
+          Repository<User>['createQueryBuilder']
+        >,
+      );
+      return queryBuilder;
+    }
+
+    it('rejects when the new password and confirmation do not match', async () => {
+      await expect(
+        service.changePassword('user-1', {
+          currentPassword: 'OldSenha123',
+          newPassword: 'NewSenha123',
+          confirmNewPassword: 'Different123',
+        }),
+      ).rejects.toMatchObject({
+        response: { code: 'NEW_PASSWORD_CONFIRMATION_MISMATCH' },
+      });
+      expect(repository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the current password is incorrect', async () => {
+      mockUserWithPasswordQuery({
+        id: 'user-1',
+        email: 'ana@example.com',
+        name: 'Ana Silva',
+        password: 'hashed-old-password',
+      });
+      (argon2.verify as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.changePassword('user-1', {
+          currentPassword: 'WrongPassword1',
+          newPassword: 'NewSenha123',
+          confirmNewPassword: 'NewSenha123',
+        }),
+      ).rejects.toMatchObject({
+        response: { code: 'INVALID_CURRENT_PASSWORD' },
+      });
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the user does not exist', async () => {
+      mockUserWithPasswordQuery(null);
+
+      await expect(
+        service.changePassword('missing-id', {
+          currentPassword: 'OldSenha123',
+          newPassword: 'NewSenha123',
+          confirmNewPassword: 'NewSenha123',
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('hashes and saves the new password, audits the change and emails the user', async () => {
+      mockUserWithPasswordQuery({
+        id: 'user-1',
+        email: 'ana@example.com',
+        name: 'Ana Silva',
+        password: 'hashed-old-password',
+      });
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-new-password');
+      repository.findOne.mockResolvedValueOnce({
+        id: 'user-1',
+        email: 'ana@example.com',
+        name: 'Ana Silva',
+      } as User);
+
+      const result = await service.changePassword('user-1', {
+        currentPassword: 'OldSenha123',
+        newPassword: 'NewSenha123',
+        confirmNewPassword: 'NewSenha123',
+      });
+
+      expect(argon2.verify).toHaveBeenCalledWith(
+        'hashed-old-password',
+        'OldSenha123',
+      );
+      expect(argon2.hash).toHaveBeenCalledWith('NewSenha123', { type: 2 });
+      expect(repository.update).toHaveBeenCalledWith('user-1', {
+        password: 'hashed-new-password',
+      });
+      expect(auditService.record).toHaveBeenCalledWith({
+        userId: 'user-1',
+        eventType: UserEventType.PasswordChanged,
+        metadata: {},
+      });
+      expect(mailService.sendPasswordChangedEmail).toHaveBeenCalledWith({
+        email: 'ana@example.com',
+        name: 'Ana Silva',
+      });
+      expect(result).not.toHaveProperty('password');
+    });
+
+    it('does not let a password-changed email failure affect the response', async () => {
+      mockUserWithPasswordQuery({
+        id: 'user-1',
+        email: 'ana@example.com',
+        name: 'Ana Silva',
+        password: 'hashed-old-password',
+      });
+      (argon2.verify as jest.Mock).mockResolvedValue(true);
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-new-password');
+      repository.findOne.mockResolvedValueOnce({
+        id: 'user-1',
+        email: 'ana@example.com',
+        name: 'Ana Silva',
+      } as User);
+      mailService.sendPasswordChangedEmail.mockRejectedValueOnce(
+        new Error('SMTP down'),
+      );
+
+      await expect(
+        service.changePassword('user-1', {
+          currentPassword: 'OldSenha123',
+          newPassword: 'NewSenha123',
+          confirmNewPassword: 'NewSenha123',
+        }),
+      ).resolves.toMatchObject({ email: 'ana@example.com' });
     });
   });
 });

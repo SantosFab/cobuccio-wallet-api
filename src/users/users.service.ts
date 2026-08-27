@@ -1,8 +1,10 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
@@ -13,6 +15,7 @@ import { DataSource, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
 import { MailService } from '../mail/mail.service';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Address } from './entities/address.entity';
@@ -328,6 +331,70 @@ export class UsersService {
     });
 
     this.logger.log('[users-service] - avatar removed successfully.');
+
+    const updated = await this.findById(userId);
+    if (!updated) throw new NotFoundException();
+    return updated;
+  }
+
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+  ): Promise<SafeUser> {
+    if (dto.newPassword !== dto.confirmNewPassword) {
+      throw new BadRequestException({
+        code: 'NEW_PASSWORD_CONFIRMATION_MISMATCH',
+        message: 'New password and confirmation do not match',
+      });
+    }
+
+    // `password` has `select: false` on the entity, so it's left out of
+    // every normal query by default — same reason findByEmailWithPassword
+    // needs an explicit addSelect for the login flow.
+    const user = await this.usersRepository
+      .createQueryBuilder('user')
+      .addSelect('user.password')
+      .where('user.id = :userId', { userId })
+      .getOne();
+    if (!user) throw new NotFoundException();
+
+    const currentPasswordMatches = await argon2.verify(
+      user.password,
+      dto.currentPassword,
+    );
+    if (!currentPasswordMatches) {
+      this.logger.warn(
+        '[users-service] - password change rejected, current password does not match.',
+      );
+      throw new UnauthorizedException({
+        code: 'INVALID_CURRENT_PASSWORD',
+        message: 'Current password is incorrect',
+      });
+    }
+
+    const newPasswordHash = await argon2.hash(dto.newPassword, {
+      type: argon2.argon2id,
+    });
+    await this.usersRepository.update(userId, { password: newPasswordHash });
+
+    await this.auditService.record({
+      userId,
+      eventType: UserEventType.PasswordChanged,
+      metadata: {},
+    });
+
+    this.logger.log('[users-service] - password changed successfully.');
+
+    // Best-effort, fire-and-forget: an SMTP hiccup should never make a
+    // successful password change look like it failed to the caller.
+    this.mailService
+      .sendPasswordChangedEmail({ email: user.email, name: user.name })
+      .catch((error: unknown) => {
+        this.logger.error(
+          '[users-service] - failed to send password changed email.',
+          error,
+        );
+      });
 
     const updated = await this.findById(userId);
     if (!updated) throw new NotFoundException();

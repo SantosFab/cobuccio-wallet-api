@@ -55,4 +55,13 @@ export class MailService {
       },
     });
   }
+
+  async sendPasswordChangedEmail(user: EmailRecipient): Promise<void> {
+    await this.mailerService.sendMail({
+      to: user.email,
+      subject: 'Sua senha foi alterada',
+      template: 'password-changed',
+      context: { name: user.name },
+    });
+  }
 }
