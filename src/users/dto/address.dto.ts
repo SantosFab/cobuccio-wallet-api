@@ -1,4 +1,10 @@
-import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import {
+  IsIn,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 
 export const BRAZILIAN_STATES = [
   'AC',
@@ -35,19 +41,24 @@ export class AddressDto {
   zipCode: string;
 
   @IsString()
+  @MaxLength(255) // matches the "street" column, varchar(255)
   street: string;
 
   @IsString()
+  @MaxLength(20) // matches the "number" column, varchar(20)
   number: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100) // matches the "complement" column, varchar(100)
   complement?: string;
 
   @IsString()
+  @MaxLength(100) // matches the "neighborhood" column, varchar(100)
   neighborhood: string;
 
   @IsString()
+  @MaxLength(100) // matches the "city" column, varchar(100)
   city: string;
 
   @IsIn(BRAZILIAN_STATES, { message: 'state must be a valid Brazilian UF' })
