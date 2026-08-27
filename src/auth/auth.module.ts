@@ -6,6 +6,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AuditModule } from '../audit/audit.module';
 import { UsersModule } from '../users/users.module';
 import { AuthCookieService } from './auth-cookie.service';
 import { AuthController } from './auth.controller';
@@ -17,6 +18,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 @Module({
   imports: [
     UsersModule,
+    AuditModule,
     PassportModule,
     TypeOrmModule.forFeature([RefreshToken]),
     JwtModule.registerAsync({

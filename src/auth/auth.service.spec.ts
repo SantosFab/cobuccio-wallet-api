@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import * as argon2 from 'argon2';
 import { Repository } from 'typeorm';
 
+import { AuditService } from '../audit/audit.service';
 import { SafeUser, UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { RefreshToken } from './entities/refresh-token.entity';
@@ -67,6 +68,7 @@ describe('AuthService', () => {
           provide: getRepositoryToken(RefreshToken),
           useValue: refreshTokenRepository,
         },
+        { provide: AuditService, useValue: { record: jest.fn() } },
       ],
     }).compile();
 

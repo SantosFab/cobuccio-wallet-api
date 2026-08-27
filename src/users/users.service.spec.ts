@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import * as argon2 from 'argon2';
 import { DataSource, Repository } from 'typeorm';
 
+import { AuditService } from '../audit/audit.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User } from './entities/user.entity';
 import { UsersService } from './users.service';
@@ -67,6 +68,7 @@ describe('UsersService', () => {
           },
         },
         { provide: DataSource, useValue: dataSource },
+        { provide: AuditService, useValue: { record: jest.fn() } },
       ],
     }).compile();
 
@@ -83,7 +85,7 @@ describe('UsersService', () => {
 
     expect(argon2.hash).toHaveBeenCalledWith('Senha123', { type: 2 });
     expect(dataSource.transaction).toHaveBeenCalledTimes(1);
-    expect(manager.save).toHaveBeenCalledTimes(2); // user, then address
+    expect(manager.save).toHaveBeenCalledTimes(3); // user, address, then wallet
     expect(result).not.toHaveProperty('password');
     expect(result.email).toBe('ana@example.com');
   });

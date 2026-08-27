@@ -5,6 +5,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
 import { IsNull, Repository } from 'typeorm';
 
+import { AuditService } from '../audit/audit.service';
+import { UserEventType } from '../audit/user-event-type';
 import { SafeUser, UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshToken } from './entities/refresh-token.entity';
@@ -29,6 +31,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     @InjectRepository(RefreshToken)
     private readonly refreshTokenRepository: Repository<RefreshToken>,
+    private readonly auditService: AuditService,
   ) {}
 
   async login(dto: LoginDto): Promise<IssuedSession> {
@@ -39,6 +42,11 @@ export class AuthService {
 
     if (!user || !passwordMatches) {
       this.logger.warn('[auth-service] - login rejected, invalid credentials.');
+      await this.auditService.record({
+        userId: user?.id ?? null,
+        eventType: UserEventType.AuthLoginFailed,
+        metadata: { email: dto.email },
+      });
       // Same message and code regardless of which part is wrong — doesn't
       // reveal whether the email exists in the system.
       throw new UnauthorizedException({
@@ -48,6 +56,10 @@ export class AuthService {
     }
 
     const { password, ...safeUser } = user;
+    await this.auditService.record({
+      userId: safeUser.id,
+      eventType: UserEventType.AuthLoginSucceeded,
+    });
     return this.issueTokens(safeUser);
   }
 
@@ -75,6 +87,10 @@ export class AuthService {
       this.logger.warn(
         '[auth-service] - refresh token reuse detected, all sessions revoked.',
       );
+      await this.auditService.record({
+        userId: existing.userId,
+        eventType: UserEventType.AuthRefreshTokenReused,
+      });
       throw new UnauthorizedException({
         code: 'REFRESH_TOKEN_REUSED',
         message: 'Invalid session, please log in again',
@@ -123,10 +139,21 @@ export class AuthService {
 
   async logout(oldRefreshToken: string): Promise<void> {
     const tokenHash = hashRefreshToken(oldRefreshToken);
+    const existing = await this.refreshTokenRepository.findOne({
+      where: { tokenHash },
+    });
+
     await this.refreshTokenRepository.update(
       { tokenHash, revokedAt: IsNull() },
       { revokedAt: new Date() },
     );
+
+    if (existing) {
+      await this.auditService.record({
+        userId: existing.userId,
+        eventType: UserEventType.AuthLogout,
+      });
+    }
   }
 
   // Shared by login and refresh so cookie-issuing logic never has to be

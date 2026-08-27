@@ -7,6 +7,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { AppConfig, deepMergeConfig, DeepPartial, IAppConfig } from './config';
 import { UsersModule } from './users/users.module';
+import { WalletsModule } from './wallets/wallets.module';
 
 // The environment name is only known at runtime, so this can't be a
 // static `import` — it has to be a dynamic `require`.
@@ -53,6 +54,7 @@ function loadEnvironmentConfig(): DeepPartial<IAppConfig> {
     }),
     UsersModule,
     AuthModule,
+    WalletsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

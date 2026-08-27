@@ -3,9 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
 import { DataSource, Repository } from 'typeorm';
 
+import { AuditService } from '../audit/audit.service';
+import { UserEventType } from '../audit/user-event-type';
 import { CreateUserDto } from './dto/create-user.dto';
 import { Address } from './entities/address.entity';
 import { User } from './entities/user.entity';
+import { Wallet } from '../wallets/entities/wallet.entity';
 
 interface PostgresUniqueViolationError {
   code: string;
@@ -32,6 +35,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User) private readonly usersRepository: Repository<User>,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
 
   async create(dto: CreateUserDto): Promise<SafeUser> {
@@ -66,9 +70,9 @@ export class UsersService {
     });
 
     try {
-      // User and Address are two separate tables, so creating both has to
-      // be atomic: if the Address insert failed after the User insert
-      // committed, we'd be left with an account that has no address at all.
+      // User, Address and Wallet are separate tables, so creating all
+      // three has to be atomic — a signup should never leave a user
+      // without a wallet.
       const savedUser = await this.dataSource.transaction(async (manager) => {
         const user = manager.create(User, {
           name: dto.name,
@@ -91,6 +95,21 @@ export class UsersService {
           state: dto.address.state,
         });
         await manager.save(address);
+
+        const wallet = manager.create(Wallet, {
+          userId: insertedUser.id,
+          balance: '0.00',
+        });
+        await manager.save(wallet);
+
+        await this.auditService.record(
+          {
+            userId: insertedUser.id,
+            eventType: UserEventType.UserRegistered,
+            metadata: { email: insertedUser.email },
+          },
+          manager,
+        );
 
         return insertedUser;
       });
