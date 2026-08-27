@@ -24,6 +24,7 @@ function buildSafeUser(overrides: Partial<SafeUser> = {}): SafeUser {
     cpf: '52998224725',
     phone: '79996729791',
     monthlyIncome: '5000.00',
+    avatarUrl: null,
     address: undefined as never,
     createdAt: new Date(),
     updatedAt: new Date(),

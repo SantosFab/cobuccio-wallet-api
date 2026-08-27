@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -51,8 +52,15 @@ export class UsersController {
   @UseInterceptors(FileInterceptor('file'))
   uploadAvatar(
     @CurrentUser() user: AuthenticatedUser,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file?: Express.Multer.File,
   ): Promise<SafeUser> {
+    if (!file) {
+      throw new BadRequestException({
+        code: 'FILE_REQUIRED',
+        message: 'No file was sent',
+      });
+    }
+
     const avatarUrl = `/uploads/avatars/${file.filename}`;
     return this.usersService.updateAvatar(user.id, avatarUrl);
   }

@@ -2,16 +2,23 @@ import { ConflictException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import * as argon2 from 'argon2';
+import { unlink } from 'fs/promises';
 import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
+import { UserEventType } from '../audit/user-event-type';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
 import { UsersService } from './users.service';
 
 jest.mock('argon2', () => ({
   argon2id: 2,
   hash: jest.fn(),
+}));
+
+jest.mock('fs/promises', () => ({
+  unlink: jest.fn().mockResolvedValue(undefined),
 }));
 
 function buildDto(): CreateUserDto {
@@ -37,10 +44,12 @@ describe('UsersService', () => {
   let service: UsersService;
   let repository: jest.Mocked<Repository<User>>;
   let dataSource: { transaction: jest.Mock };
-  let manager: { create: jest.Mock; save: jest.Mock };
+  let manager: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
+  let auditService: { record: jest.Mock };
 
   beforeEach(async () => {
     manager = {
+      findOne: jest.fn(),
       create: jest.fn((_entityClass: unknown, data: unknown) => data),
       save: jest.fn((entity: Record<string, unknown>) =>
         Promise.resolve({
@@ -56,6 +65,7 @@ describe('UsersService', () => {
         callback(manager),
       ),
     };
+    auditService = { record: jest.fn() };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -64,11 +74,12 @@ describe('UsersService', () => {
           provide: getRepositoryToken(User),
           useValue: {
             findOne: jest.fn(),
+            update: jest.fn(),
             createQueryBuilder: jest.fn(),
           },
         },
         { provide: DataSource, useValue: dataSource },
-        { provide: AuditService, useValue: { record: jest.fn() } },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
 
@@ -76,6 +87,7 @@ describe('UsersService', () => {
     repository = module.get(getRepositoryToken(User));
 
     (argon2.hash as jest.Mock).mockResolvedValue('hashed-password');
+    (unlink as jest.Mock).mockClear();
   });
 
   it('creates a user and its address in the same transaction, never returning the password', async () => {
@@ -172,6 +184,180 @@ describe('UsersService', () => {
       const result = await service.findById('missing-id');
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('update', () => {
+    function buildUser(overrides: Partial<User> = {}): User {
+      return {
+        id: 'user-1',
+        name: 'Ana Silva',
+        email: 'ana@example.com',
+        phone: '11987654321',
+        monthlyIncome: '3500.00',
+        address: {
+          zipCode: '01310100',
+          street: 'Avenida Paulista',
+          number: '1000',
+          complement: null,
+          neighborhood: 'Bela Vista',
+          city: 'São Paulo',
+          state: 'SP',
+        },
+        ...overrides,
+      } as User;
+    }
+
+    it('updates only the fields that changed and audits a diff', async () => {
+      manager.findOne.mockResolvedValue(buildUser());
+      repository.findOne
+        .mockResolvedValueOnce(null) // no other user has this email
+        .mockResolvedValueOnce(buildUser({ email: 'new@example.com' })); // findById at the end
+
+      const dto: UpdateUserDto = { email: 'new@example.com' };
+      await service.update('user-1', dto);
+
+      expect(manager.save).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'new@example.com' }),
+      );
+      expect(auditService.record).toHaveBeenCalledWith(
+        {
+          userId: 'user-1',
+          eventType: UserEventType.ProfileUpdated,
+          metadata: {
+            changes: {
+              email: { before: 'ana@example.com', after: 'new@example.com' },
+            },
+          },
+        },
+        manager,
+      );
+    });
+
+    it('does not record a change when the resent value is identical to what is already stored', async () => {
+      manager.findOne.mockResolvedValue(buildUser());
+      repository.findOne
+        .mockResolvedValueOnce(buildUser()) // duplicate-email check finds itself
+        .mockResolvedValueOnce(buildUser()); // findById at the end
+
+      await service.update('user-1', { email: 'ana@example.com' });
+
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: { changes: {} } }),
+        manager,
+      );
+    });
+
+    it('rejects when the new email already belongs to a different user', async () => {
+      repository.findOne.mockResolvedValueOnce({ id: 'someone-else' } as User);
+
+      await expect(
+        service.update('user-1', { email: 'taken@example.com' }),
+      ).rejects.toMatchObject({
+        response: { code: 'EMAIL_ALREADY_REGISTERED' },
+      });
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('translates a database unique-constraint violation into a 409 as a second line of defense', async () => {
+      repository.findOne.mockResolvedValueOnce(null);
+      dataSource.transaction.mockRejectedValueOnce({
+        code: '23505',
+        detail: 'Key (email)=(new@example.com) already exists.',
+      });
+
+      await expect(
+        service.update('user-1', { email: 'new@example.com' }),
+      ).rejects.toMatchObject({
+        response: { code: 'EMAIL_ALREADY_REGISTERED' },
+      });
+    });
+  });
+
+  describe('updateAvatar', () => {
+    it('deletes the previous avatar file and audits the change', async () => {
+      repository.findOne
+        .mockResolvedValueOnce({
+          id: 'user-1',
+          avatarUrl: '/uploads/avatars/old.jpg',
+        } as User)
+        .mockResolvedValueOnce({
+          id: 'user-1',
+          avatarUrl: '/uploads/avatars/new.jpg',
+        } as User);
+
+      await service.updateAvatar('user-1', '/uploads/avatars/new.jpg');
+
+      expect(unlink).toHaveBeenCalledWith(
+        expect.stringContaining('/uploads/avatars/old.jpg'),
+      );
+      expect(repository.update).toHaveBeenCalledWith('user-1', {
+        avatarUrl: '/uploads/avatars/new.jpg',
+      });
+      expect(auditService.record).toHaveBeenCalledWith({
+        userId: 'user-1',
+        eventType: UserEventType.AvatarUpdated,
+        metadata: {
+          avatarUrl: {
+            before: '/uploads/avatars/old.jpg',
+            after: '/uploads/avatars/new.jpg',
+          },
+        },
+      });
+    });
+
+    it('does not try to delete anything when there was no previous avatar', async () => {
+      repository.findOne
+        .mockResolvedValueOnce({ id: 'user-1', avatarUrl: null } as User)
+        .mockResolvedValueOnce({
+          id: 'user-1',
+          avatarUrl: '/uploads/avatars/new.jpg',
+        } as User);
+
+      await service.updateAvatar('user-1', '/uploads/avatars/new.jpg');
+
+      expect(unlink).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the user does not exist', async () => {
+      repository.findOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.updateAvatar('missing-id', '/uploads/avatars/new.jpg'),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('removeAvatar', () => {
+    it('deletes the file, clears the column and audits the removal', async () => {
+      repository.findOne
+        .mockResolvedValueOnce({
+          id: 'user-1',
+          avatarUrl: '/uploads/avatars/old.jpg',
+        } as User)
+        .mockResolvedValueOnce({ id: 'user-1', avatarUrl: null } as User);
+
+      await service.removeAvatar('user-1');
+
+      expect(unlink).toHaveBeenCalledWith(
+        expect.stringContaining('/uploads/avatars/old.jpg'),
+      );
+      expect(repository.update).toHaveBeenCalledWith('user-1', {
+        avatarUrl: null,
+      });
+      expect(auditService.record).toHaveBeenCalledWith({
+        userId: 'user-1',
+        eventType: UserEventType.AvatarRemoved,
+        metadata: {
+          avatarUrl: { before: '/uploads/avatars/old.jpg', after: null },
+        },
+      });
+    });
+
+    it('rejects when the user does not exist', async () => {
+      repository.findOne.mockResolvedValueOnce(null);
+
+      await expect(service.removeAvatar('missing-id')).rejects.toThrow();
     });
   });
 });
