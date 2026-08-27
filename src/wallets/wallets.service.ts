@@ -332,11 +332,20 @@ export class WalletsService {
     const statusBefore = original.status;
     let balanceChanges: Record<string, unknown>;
 
-    // No balance check here on purpose — a reversal corrects something
-    // that already happened, so it's allowed to push a wallet negative
-    // if the recipient already spent what they received.
+    // Unlike before, a reversal is now blocked (not allowed to push a
+    // wallet negative) if whoever is losing money in the reversal
+    // (the original depositor, or the original recipient) has already
+    // spent it and can't cover the amount being taken back.
     if (original.type === 'deposit') {
       const wallet = await this.lockWalletById(manager, original.toWalletId!);
+
+      if (isLessThan(wallet.balance, original.amount)) {
+        throw new BadRequestException({
+          code: 'INSUFFICIENT_BALANCE',
+          message: 'Insufficient balance',
+        });
+      }
+
       const balanceBefore = wallet.balance;
       wallet.balance = subtractAmounts(wallet.balance, original.amount);
       await manager.save(wallet);
@@ -355,6 +364,13 @@ export class WalletsService {
         firstWalletId === original.fromWalletId ? firstWallet : secondWallet;
       const originalRecipientWallet =
         firstWalletId === original.fromWalletId ? secondWallet : firstWallet;
+
+      if (isLessThan(originalRecipientWallet.balance, original.amount)) {
+        throw new BadRequestException({
+          code: 'INSUFFICIENT_BALANCE',
+          message: 'Insufficient balance',
+        });
+      }
 
       const senderBalanceBefore = originalSenderWallet.balance;
       const recipientBalanceBefore = originalRecipientWallet.balance;

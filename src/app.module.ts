@@ -46,7 +46,7 @@ function loadEnvironmentConfig(): DeepPartial<IAppConfig> {
     // Baseline abuse protection on every route (opt out per-route with
     // @SkipThrottle() if ever needed) — POST /auth/login overrides this
     // with a stricter limit of its own (see auth.controller.ts).
-    ThrottlerModule.forRoot([{ ttl: 30000, limit: 10 }]),
+    ThrottlerModule.forRoot([{ ttl: 30000, limit: 20 }]),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
