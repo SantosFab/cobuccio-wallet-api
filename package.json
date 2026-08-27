@@ -24,6 +24,7 @@
     "migration:revert": "yarn typeorm migration:revert -d src/database/data-source.ts"
   },
   "dependencies": {
+    "@nestjs-modules/mailer": "^2.3.7",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "4.0.4",
     "@nestjs/core": "^11.0.1",
@@ -38,6 +39,8 @@
     "cookie-parser": "^1.4.7",
     "dotenv": "17.4.2",
     "dotenv-expand": "12.0.3",
+    "handlebars": "^4.7.9",
+    "nodemailer": "^9.0.5",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pg": "8.23.0",
@@ -56,6 +59,7 @@
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.2.0",
     "@types/node": "^24.0.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport": "^1.0.17",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^7.0.0",

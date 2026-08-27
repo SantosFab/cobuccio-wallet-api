@@ -11,6 +11,7 @@ import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
+import { MailService } from '../mail/mail.service';
 import { User } from '../users/entities/user.entity';
 import { isValidTestCard } from './utils/card.util';
 import { DepositDto } from './dto/deposit.dto';
@@ -42,6 +43,7 @@ export class WalletsService {
     private readonly transactionsRepository: Repository<WalletTransaction>,
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
+    private readonly mailService: MailService,
   ) {}
 
   async getBalance(userId: string): Promise<Wallet> {
@@ -62,44 +64,73 @@ export class WalletsService {
 
     const amount = dto.amount.toFixed(2);
 
-    return this.dataSource.transaction(async (manager) => {
-      const wallet = await this.lockWalletByUserId(manager, userId);
-      const balanceBefore = wallet.balance;
+    const { transaction: saved, depositor } = await this.dataSource.transaction(
+      async (manager) => {
+        const wallet = await this.lockWalletByUserId(manager, userId);
+        const balanceBefore = wallet.balance;
 
-      wallet.balance = addAmounts(wallet.balance, amount);
-      await manager.save(wallet);
+        wallet.balance = addAmounts(wallet.balance, amount);
+        await manager.save(wallet);
 
-      const transaction = manager.create(WalletTransaction, {
-        type: 'deposit',
-        amount,
-        fromWalletId: null,
-        toWalletId: wallet.id,
-        initiatedByUserId: userId,
-      });
-      const saved = await manager.save(transaction);
+        const depositorUser = await manager.findOne(User, {
+          where: { id: userId },
+        });
 
-      await this.auditService.record(
-        {
-          userId,
-          eventType: UserEventType.WalletDepositCompleted,
-          metadata: {
-            amount,
-            transactionId: saved.id,
-            balance: { before: balanceBefore, after: wallet.balance },
+        const transaction = manager.create(WalletTransaction, {
+          type: 'deposit',
+          amount,
+          fromWalletId: null,
+          toWalletId: wallet.id,
+          initiatedByUserId: userId,
+        });
+        const savedTransaction = await manager.save(transaction);
+
+        await this.auditService.record(
+          {
+            userId,
+            eventType: UserEventType.WalletDepositCompleted,
+            metadata: {
+              amount,
+              transactionId: savedTransaction.id,
+              balance: { before: balanceBefore, after: wallet.balance },
+            },
           },
-        },
-        manager,
-      );
+          manager,
+        );
 
-      this.logger.log('[wallets-service] - deposit completed.');
-      return saved;
-    });
+        this.logger.log('[wallets-service] - deposit completed.');
+        return { transaction: savedTransaction, depositor: depositorUser };
+      },
+    );
+
+    // Best-effort, fire-and-forget: outside the transaction (a slow or
+    // failing SMTP call should never hold the row lock open or roll back
+    // a deposit that already completed).
+    if (depositor) {
+      this.mailService
+        .sendMoneyReceivedEmail(
+          { email: depositor.email, name: depositor.name },
+          { amount, counterpartName: null },
+        )
+        .catch((error: unknown) => {
+          this.logger.error(
+            '[wallets-service] - failed to send deposit email.',
+            error,
+          );
+        });
+    }
+
+    return saved;
   }
 
   async transfer(userId: string, dto: TransferDto): Promise<WalletTransaction> {
     const amount = dto.amount.toFixed(2);
 
-    return this.dataSource.transaction(async (manager) => {
+    const {
+      transaction: saved,
+      senderInfo,
+      recipientInfo,
+    } = await this.dataSource.transaction(async (manager) => {
       const senderUser = await manager.findOne(User, { where: { id: userId } });
       if (!senderUser) {
         throw new NotFoundException({
@@ -126,6 +157,12 @@ export class WalletsService {
           message: 'Cannot transfer money to yourself',
         });
       }
+
+      const senderInfo = { email: senderUser.email, name: senderUser.name };
+      const recipientInfo = {
+        email: recipientUser.email,
+        name: recipientUser.name,
+      };
 
       // Always lock in the same order (sorted by user id) regardless of
       // who is sender/recipient — two concurrent transfers between the
@@ -165,7 +202,7 @@ export class WalletsService {
         toWalletId: recipientWallet.id,
         initiatedByUserId: userId,
       });
-      const saved = await manager.save(transaction);
+      const savedTransaction = await manager.save(transaction);
 
       await this.auditService.record(
         {
@@ -173,9 +210,12 @@ export class WalletsService {
           eventType: UserEventType.WalletTransferCompleted,
           metadata: {
             amount,
-            transactionId: saved.id,
+            transactionId: savedTransaction.id,
             recipientUserId: recipientUser.id,
-            senderBalance: { before: senderBalanceBefore, after: senderWallet.balance },
+            senderBalance: {
+              before: senderBalanceBefore,
+              after: senderWallet.balance,
+            },
             recipientBalance: {
               before: recipientBalanceBefore,
               after: recipientWallet.balance,
@@ -186,8 +226,36 @@ export class WalletsService {
       );
 
       this.logger.log('[wallets-service] - transfer completed.');
-      return saved;
+      return { transaction: savedTransaction, senderInfo, recipientInfo };
     });
+
+    // Best-effort, fire-and-forget: outside the transaction, same
+    // reasoning as deposit() — an SMTP failure never rolls back money
+    // that already moved.
+    this.mailService
+      .sendMoneySentEmail(senderInfo, {
+        amount,
+        counterpartName: recipientInfo.name,
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          '[wallets-service] - failed to send transfer-sent email.',
+          error,
+        );
+      });
+    this.mailService
+      .sendMoneyReceivedEmail(recipientInfo, {
+        amount,
+        counterpartName: senderInfo.name,
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          '[wallets-service] - failed to send transfer-received email.',
+          error,
+        );
+      });
+
+    return saved;
   }
 
   // Deposits have only one party, so the original depositor reverses them
@@ -273,7 +341,9 @@ export class WalletsService {
       wallet.balance = subtractAmounts(wallet.balance, original.amount);
       await manager.save(wallet);
 
-      balanceChanges = { balance: { before: balanceBefore, after: wallet.balance } };
+      balanceChanges = {
+        balance: { before: balanceBefore, after: wallet.balance },
+      };
     } else {
       const [firstWalletId, secondWalletId] = [
         original.fromWalletId!,
@@ -301,7 +371,10 @@ export class WalletsService {
       await manager.save(originalRecipientWallet);
 
       balanceChanges = {
-        senderBalance: { before: senderBalanceBefore, after: originalSenderWallet.balance },
+        senderBalance: {
+          before: senderBalanceBefore,
+          after: originalSenderWallet.balance,
+        },
         recipientBalance: {
           before: recipientBalanceBefore,
           after: originalRecipientWallet.balance,

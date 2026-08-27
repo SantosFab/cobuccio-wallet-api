@@ -12,6 +12,7 @@ import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
+import { MailService } from '../mail/mail.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Address } from './entities/address.entity';
@@ -44,6 +45,7 @@ export class UsersService {
     @InjectRepository(User) private readonly usersRepository: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
+    private readonly mailService: MailService,
   ) {}
 
   async create(dto: CreateUserDto): Promise<SafeUser> {
@@ -123,6 +125,17 @@ export class UsersService {
       });
 
       this.logger.log('[users-service] - user created successfully.');
+
+      // Best-effort, fire-and-forget: an SMTP hiccup should never make a
+      // successful signup look like it failed to the caller.
+      this.mailService
+        .sendWelcomeEmail({ email: savedUser.email, name: savedUser.name })
+        .catch((error: unknown) => {
+          this.logger.error(
+            '[users-service] - failed to send welcome email.',
+            error,
+          );
+        });
 
       const { password, ...safeUser } = savedUser;
       return safeUser;

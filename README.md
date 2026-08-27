@@ -51,9 +51,10 @@ From scratch, running these in order gets you a working API in dev mode:
 $ cp .env.example .env    # the Makefile also does this automatically on the first run of any command
 $ make install             # installs dependencies locally — migrations run on the host, not in a container
 $ make database             # starts only the Postgres container
-$ make migration-run         # creates every table
-$ make build-dev               # builds the dev image
-$ make up-dev                   # starts the API in dev mode (hot reload) at http://localhost:4000
+$ make mailhog                # starts only the Mailhog container (catches emails locally)
+$ make migration-run           # creates every table
+$ make build-dev                 # builds the dev image
+$ make up-dev                     # starts the API in dev mode (hot reload) at http://localhost:4000
 ```
 
 Available commands, grouped the same way as in the `Makefile`:
@@ -65,6 +66,10 @@ $ make stop-database         # stops the Postgres container
 $ make psql                  # connects to Postgres via psql
 $ make db-truncate           # deletes ALL DATA from every table, keeping the schema and migration history intact
 $ make db-drop               # destroys EVERY table (including migration history) — leaves the database ready for `make migration-run`
+
+# mail (Mailhog — catches every email sent locally, no real delivery)
+$ make mailhog                # starts only the Mailhog container
+$ make stop-mailhog           # stops the Mailhog container
 
 # migrations (run yarn/ts-node on the host, not inside Docker — requires `make database` to be running)
 $ make migration-generate NAME=CreateUsers   # generates a migration by diffing entities against the database
@@ -85,12 +90,13 @@ $ make up                       # [prod] recreates the production container — 
 $ make stop                     # [prod] stops the production container — Postgres is not touched
 
 # misc
-$ make logs SERVICE=api-dev      # follows the logs of a given service (api, api-dev or postgres)
+$ make logs SERVICE=api-dev      # follows the logs of a given service (api, api-dev, postgres or mailhog)
 $ make help                      # lists every available command
 ```
 
 - API: http://localhost:4000 (port configurable via `DOCKER_API_PORT` in `.env`)
 - Postgres: `localhost:5432` (port configurable via `DOCKER_DB_PORT` in `.env`)
+- Mailhog UI: http://localhost:8025 (port configurable via `DOCKER_MAILHOG_WEB_PORT` in `.env`) — every email the API sends locally shows up here instead of a real inbox; SMTP port `1025` (`DOCKER_MAILHOG_SMTP_PORT`)
 
 `cobuccio-wallet-web` must use the same `COMPOSE_PROJECT_NAME` in its own `.env` so both repos join the same Docker network and can reach each other by hostname (`api`, `web`, `postgres`).
 

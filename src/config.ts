@@ -100,6 +100,19 @@ export const AppConfig = {
   Uploads: {
     avatarsDir: 'uploads/avatars',
     maxAvatarSizeBytes: 2 * 1024 * 1024,
-    allowedAvatarMimeTypes: ['image/jpeg', 'image/png', 'image/webp'] as string[],
+    allowedAvatarMimeTypes: [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+    ] as string[],
+  },
+  Mail: {
+    // No real defaults on purpose — these only matter to a running
+    // instance via config.<env>.ts, same reasoning as Auth.jwtSecret.
+    host: undefined as string | undefined,
+    port: 1025,
+    user: undefined as string | undefined,
+    password: undefined as string | undefined,
+    from: undefined as string | undefined,
   },
 };

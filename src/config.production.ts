@@ -31,8 +31,14 @@ export default {
       'UPLOAD_MAX_AVATAR_SIZE_BYTES',
       2 * 1024 * 1024,
     ),
-    allowedAvatarMimeTypes: process.env.UPLOAD_ALLOWED_AVATAR_MIME_TYPES?.split(
-      ',',
-    ),
+    allowedAvatarMimeTypes:
+      process.env.UPLOAD_ALLOWED_AVATAR_MIME_TYPES?.split(','),
+  },
+  Mail: {
+    host: process.env.MAIL_HOST,
+    port: AppConfigUtil.getInt('MAIL_PORT', 1025),
+    user: process.env.MAIL_USER,
+    password: process.env.MAIL_PASSWORD,
+    from: process.env.MAIL_FROM,
   },
 } satisfies DeepPartial<IAppConfig>;

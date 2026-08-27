@@ -4,6 +4,7 @@ import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
+import { MailService } from '../mail/mail.service';
 import { User } from '../users/entities/user.entity';
 import { WalletTransaction } from './entities/wallet-transaction.entity';
 import { Wallet } from './entities/wallet.entity';
@@ -29,6 +30,10 @@ describe('WalletsService', () => {
   };
   let manager: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
   let auditService: { record: jest.Mock };
+  let mailService: {
+    sendMoneyReceivedEmail: jest.Mock;
+    sendMoneySentEmail: jest.Mock;
+  };
 
   beforeEach(async () => {
     manager = {
@@ -47,6 +52,10 @@ describe('WalletsService', () => {
     walletsRepository = { findOne: jest.fn(), find: jest.fn() };
     transactionsRepository = { find: jest.fn() };
     auditService = { record: jest.fn() };
+    mailService = {
+      sendMoneyReceivedEmail: jest.fn(),
+      sendMoneySentEmail: jest.fn(),
+    };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -58,6 +67,7 @@ describe('WalletsService', () => {
         },
         { provide: DataSource, useValue: dataSource },
         { provide: AuditService, useValue: auditService },
+        { provide: MailService, useValue: mailService },
       ],
     }).compile();
 
@@ -65,12 +75,28 @@ describe('WalletsService', () => {
   });
 
   describe('deposit', () => {
-    it('adds to the balance and recomposes a negative balance', async () => {
-      manager.findOne.mockResolvedValue({
-        id: 'wallet-1',
-        userId: 'user-1',
-        balance: '-50.00',
+    function mockWalletAndDepositor() {
+      manager.findOne.mockImplementation((entityClass: unknown) => {
+        if (entityClass === Wallet) {
+          return Promise.resolve({
+            id: 'wallet-1',
+            userId: 'user-1',
+            balance: '-50.00',
+          });
+        }
+        if (entityClass === User) {
+          return Promise.resolve({
+            id: 'user-1',
+            name: 'Ana Silva',
+            email: 'ana@example.com',
+          });
+        }
+        return Promise.resolve(null);
       });
+    }
+
+    it('adds to the balance and recomposes a negative balance', async () => {
+      mockWalletAndDepositor();
 
       const result = await service.deposit('user-1', {
         amount: 30,
@@ -87,6 +113,30 @@ describe('WalletsService', () => {
         toWalletId: 'wallet-1',
         initiatedByUserId: 'user-1',
       });
+    });
+
+    it('sends a "money received" email to the depositor after the transaction commits', async () => {
+      mockWalletAndDepositor();
+
+      await service.deposit('user-1', { amount: 30, ...VALID_CARD });
+
+      expect(mailService.sendMoneyReceivedEmail).toHaveBeenCalledWith(
+        { email: 'ana@example.com', name: 'Ana Silva' },
+        { amount: '30.00', counterpartName: null },
+      );
+    });
+
+    it('does not send an email when the card is rejected', async () => {
+      await expect(
+        service.deposit('user-1', {
+          amount: 30,
+          cardNumber: '1111111111111111',
+          cardCvv: '123',
+          cardExpiry: '12/30',
+        }),
+      ).rejects.toMatchObject({ response: { code: 'INVALID_CARD' } });
+
+      expect(mailService.sendMoneyReceivedEmail).not.toHaveBeenCalled();
     });
 
     it('rejects a card number other than the test card, without touching the balance', async () => {
@@ -121,8 +171,16 @@ describe('WalletsService', () => {
   });
 
   describe('transfer', () => {
-    const senderUser = { id: 'user-a', email: 'a@example.com' } as User;
-    const recipientUser = { id: 'user-b', email: 'b@example.com' } as User;
+    const senderUser = {
+      id: 'user-a',
+      email: 'a@example.com',
+      name: 'Sender A',
+    } as User;
+    const recipientUser = {
+      id: 'user-b',
+      email: 'b@example.com',
+      name: 'Recipient B',
+    } as User;
 
     function mockUsersAndWallets(
       senderWallet: Wallet,
@@ -172,6 +230,14 @@ describe('WalletsService', () => {
         toWalletId: 'wallet-b',
         initiatedByUserId: 'user-a',
       });
+      expect(mailService.sendMoneySentEmail).toHaveBeenCalledWith(
+        { email: senderUser.email, name: senderUser.name },
+        { amount: '20.00', counterpartName: recipientUser.name },
+      );
+      expect(mailService.sendMoneyReceivedEmail).toHaveBeenCalledWith(
+        { email: recipientUser.email, name: recipientUser.name },
+        { amount: '20.00', counterpartName: senderUser.name },
+      );
     });
 
     it('looks up the recipient by CPF when the identifier is not an email', async () => {

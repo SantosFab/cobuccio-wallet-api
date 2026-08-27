@@ -8,6 +8,7 @@ import { mkdirSync } from 'fs';
 import { extname, join } from 'path';
 
 import { AuditModule } from '../audit/audit.module';
+import { MailModule } from '../mail/mail.module';
 import { Address } from './entities/address.entity';
 import { User } from './entities/user.entity';
 import { UsersController } from './users.controller';
@@ -17,6 +18,7 @@ import { UsersService } from './users.service';
   imports: [
     TypeOrmModule.forFeature([User, Address]),
     AuditModule,
+    MailModule,
     MulterModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {

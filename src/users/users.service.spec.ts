@@ -7,6 +7,7 @@ import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
+import { MailService } from '../mail/mail.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
@@ -46,6 +47,7 @@ describe('UsersService', () => {
   let dataSource: { transaction: jest.Mock };
   let manager: { findOne: jest.Mock; create: jest.Mock; save: jest.Mock };
   let auditService: { record: jest.Mock };
+  let mailService: { sendWelcomeEmail: jest.Mock };
 
   beforeEach(async () => {
     manager = {
@@ -66,6 +68,7 @@ describe('UsersService', () => {
       ),
     };
     auditService = { record: jest.fn() };
+    mailService = { sendWelcomeEmail: jest.fn().mockResolvedValue(undefined) };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -80,6 +83,7 @@ describe('UsersService', () => {
         },
         { provide: DataSource, useValue: dataSource },
         { provide: AuditService, useValue: auditService },
+        { provide: MailService, useValue: mailService },
       ],
     }).compile();
 
@@ -100,6 +104,19 @@ describe('UsersService', () => {
     expect(manager.save).toHaveBeenCalledTimes(3); // user, address, then wallet
     expect(result).not.toHaveProperty('password');
     expect(result.email).toBe('ana@example.com');
+    expect(mailService.sendWelcomeEmail).toHaveBeenCalledWith({
+      email: 'ana@example.com',
+      name: 'Ana Silva',
+    });
+  });
+
+  it('does not let a welcome-email failure affect the signup response', async () => {
+    repository.findOne.mockResolvedValue(null);
+    mailService.sendWelcomeEmail.mockRejectedValueOnce(new Error('SMTP down'));
+
+    await expect(service.create(buildDto())).resolves.toMatchObject({
+      email: 'ana@example.com',
+    });
   });
 
   it('rejects signup when the email is already registered', async () => {

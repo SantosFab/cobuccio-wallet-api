@@ -73,6 +73,14 @@ db-drop: check-docker versions ## Destroys EVERY table (including migration hist
 	@$(eval DATABASE_CONTAINER_ID := $(shell ${DOCKER_CMD} ps -f name=${COMPOSE_PROJECT_NAME} --format "{{.Names}}" | grep postgres))
 	@${DOCKER_CMD} exec -it ${DATABASE_CONTAINER_ID} psql -U ${DATABASE_USERNAME} -d ${DATABASE_NAME} -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO ${DATABASE_USERNAME}; GRANT ALL ON SCHEMA public TO public; CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
 
+## --- Mail (Mailhog) ---
+
+mailhog: check-docker versions ## Starts only the Mailhog container
+	@${DOCKER_COMPOSE} up -d mailhog
+
+stop-mailhog: check-docker versions ## Stops the Mailhog container
+	@${DOCKER_COMPOSE} stop mailhog
+
 ## --- Migrations ---
 ## These run yarn/ts-node directly on the host (like `make install`), not
 ## inside Docker. The .env value for DATABASE_HOST ("postgres") only
@@ -122,7 +130,7 @@ stop: check-docker versions ## [prod] Stops the production container. Postgres i
 
 ## --- Misc ---
 
-logs: check-docker ## Shows the logs. Usage: make logs SERVICE=api|api-dev|postgres
+logs: check-docker ## Shows the logs. Usage: make logs SERVICE=api|api-dev|postgres|mailhog
 	@${DOCKER_COMPOSE} logs -f $(SERVICE)
 
 help: versions ## Shows this help
