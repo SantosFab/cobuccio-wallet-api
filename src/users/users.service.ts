@@ -6,23 +6,19 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
-import { randomUUID } from 'crypto';
-import { unlink, writeFile } from 'fs/promises';
-import { join } from 'path';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
 import { MailService } from '../mail/mail.service';
+import { AvatarStorageService } from './avatar-storage.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Address } from './entities/address.entity';
 import { User } from './entities/user.entity';
-import { matchesImageSignature } from './utils/image-signature.util';
 import { Wallet } from '../wallets/entities/wallet.entity';
 
 interface PostgresUniqueViolationError {
@@ -48,17 +44,6 @@ export type SafeUser = Omit<User, 'password'>;
 // only what they actually use, instead of the full user row.
 export type BasicUser = Pick<User, 'id' | 'name' | 'email'>;
 
-// The saved extension must never come from the client-supplied filename
-// — that field is fully attacker-controlled and independent of the
-// already-validated mimetype (see matchesImageSignature). Mapping the
-// extension from the mimetype instead closes that gap. Keep this in sync
-// with Uploads.allowedAvatarMimeTypes.
-const AVATAR_MIME_EXTENSIONS: Record<string, string> = {
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-};
-
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -68,7 +53,7 @@ export class UsersService {
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
-    private readonly configService: ConfigService,
+    private readonly avatarStorageService: AvatarStorageService,
   ) {}
 
   async create(dto: CreateUserDto): Promise<SafeUser> {
@@ -375,34 +360,12 @@ export class UsersService {
     const user = await this.usersRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException();
 
-    // Checked against the in-memory buffer (MulterModule uses
-    // memoryStorage — see users.module.ts) before a single byte reaches
-    // disk. fileFilter there only checked the client-declared mimetype
-    // header, which is spoofable; this confirms the actual bytes are a
-    // real image of that type, so an invalid or malicious upload is
-    // rejected without ever being written and needing cleanup.
-    const isRealImage = matchesImageSignature(file.buffer, file.mimetype);
-    if (!isRealImage) {
-      this.logger.warn(
-        '[users-service] - avatar upload rejected, content does not match declared type.',
-      );
-      throw new BadRequestException({
-        code: 'UNSUPPORTED_FILE_TYPE',
-        message: 'Unsupported file type',
-      });
-    }
+    // Content validation (real bytes vs. declared mimetype) and disk I/O
+    // both live in AvatarStorageService — this method only orchestrates
+    // "what changes on the user row", not how a file gets stored.
+    const avatarUrl = await this.avatarStorageService.save(file);
 
-    const avatarsDir = this.configService.get<string>(
-      'Uploads.avatarsDir',
-      'uploads/avatars',
-    );
-    const extension = AVATAR_MIME_EXTENSIONS[file.mimetype] ?? '';
-    const filename = `${randomUUID()}${extension}`;
-    await writeFile(join(process.cwd(), avatarsDir, filename), file.buffer);
-
-    const avatarUrl = `/uploads/avatars/${filename}`;
-
-    if (user.avatarUrl) await this.deleteAvatarFile(user.avatarUrl);
+    if (user.avatarUrl) await this.avatarStorageService.delete(user.avatarUrl);
 
     await this.usersRepository.update(userId, { avatarUrl });
 
@@ -423,7 +386,7 @@ export class UsersService {
     const user = await this.usersRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException();
 
-    if (user.avatarUrl) await this.deleteAvatarFile(user.avatarUrl);
+    if (user.avatarUrl) await this.avatarStorageService.delete(user.avatarUrl);
 
     await this.usersRepository.update(userId, { avatarUrl: null });
 
@@ -502,11 +465,5 @@ export class UsersService {
     const updated = await this.findById(userId);
     if (!updated) throw new NotFoundException();
     return updated;
-  }
-
-  // Best-effort cleanup — a file that fails to delete (already gone,
-  // permission issue) shouldn't block the caller's own update from saving.
-  private async deleteAvatarFile(avatarUrl: string): Promise<void> {
-    await unlink(join(process.cwd(), avatarUrl)).catch(() => {});
   }
 }

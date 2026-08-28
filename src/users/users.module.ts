@@ -8,6 +8,7 @@ import { join } from 'path';
 
 import { AuditModule } from '../audit/audit.module';
 import { MailModule } from '../mail/mail.module';
+import { AvatarStorageService } from './avatar-storage.service';
 import { Address } from './entities/address.entity';
 import { User } from './entities/user.entity';
 import { UsersController } from './users.controller';
@@ -25,7 +26,7 @@ import { UsersService } from './users.service';
           'Uploads.avatarsDir',
           'uploads/avatars',
         );
-        // Only needed so UsersService.updateAvatar has somewhere to write
+        // Only needed so AvatarStorageService.save has somewhere to write
         // an already-validated file to — Multer itself never touches disk
         // (see `storage` below).
         mkdirSync(join(process.cwd(), avatarsDir), { recursive: true });
@@ -37,7 +38,7 @@ import { UsersService } from './users.service';
 
         return {
           // Buffers the upload in memory instead of writing it to disk.
-          // UsersService.updateAvatar checks the real file content (see
+          // AvatarStorageService.save checks the real file content (see
           // image-signature.util.ts) against `file.buffer` and only
           // writes it to disk once that check passes — an invalid or
           // malicious upload never touches the filesystem, not even
@@ -67,7 +68,7 @@ import { UsersService } from './users.service';
     }),
   ],
   controllers: [UsersController],
-  providers: [UsersService],
+  providers: [UsersService, AvatarStorageService],
   exports: [UsersService],
 })
 export class UsersModule {}
