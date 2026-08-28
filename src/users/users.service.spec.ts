@@ -1,33 +1,22 @@
-import { ConflictException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
+import { Test, TestingModule } from '@nestjs/testing';
 import * as argon2 from 'argon2';
-import { unlink, writeFile } from 'fs/promises';
 import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
 import { MailService } from '../mail/mail.service';
+import { AvatarStorageService } from './avatar-storage.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
 import { UsersService } from './users.service';
-import { matchesImageSignature } from './utils/image-signature.util';
 
 jest.mock('argon2', () => ({
   argon2id: 2,
   hash: jest.fn(),
   verify: jest.fn(),
-}));
-
-jest.mock('fs/promises', () => ({
-  unlink: jest.fn().mockResolvedValue(undefined),
-  writeFile: jest.fn().mockResolvedValue(undefined),
-}));
-
-jest.mock('./utils/image-signature.util', () => ({
-  matchesImageSignature: jest.fn(),
 }));
 
 function buildDto(): CreateUserDto {
@@ -59,6 +48,8 @@ describe('UsersService', () => {
     sendWelcomeEmail: jest.Mock;
     sendPasswordChangedEmail: jest.Mock;
   };
+  let avatarStorageService: { save: jest.Mock; delete: jest.Mock };
+  let module: TestingModule;
 
   beforeEach(async () => {
     manager = {
@@ -83,14 +74,23 @@ describe('UsersService', () => {
       sendWelcomeEmail: jest.fn().mockResolvedValue(undefined),
       sendPasswordChangedEmail: jest.fn().mockResolvedValue(undefined),
     };
+    // Content validation and disk I/O both live in AvatarStorageService now
+    // (see avatar-storage.service.spec.ts) — UsersService only needs to
+    // know that `save` resolves with a URL and `delete` cleans up, so it's
+    // mocked at that boundary instead of reaching into the filesystem.
+    avatarStorageService = {
+      save: jest.fn().mockResolvedValue('/uploads/avatars/generated.jpg'),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
 
-    const module = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         UsersService,
         {
           provide: getRepositoryToken(User),
           useValue: {
             findOne: jest.fn(),
+            find: jest.fn(),
             update: jest.fn(),
             createQueryBuilder: jest.fn(),
           },
@@ -98,14 +98,7 @@ describe('UsersService', () => {
         { provide: DataSource, useValue: dataSource },
         { provide: AuditService, useValue: auditService },
         { provide: MailService, useValue: mailService },
-        {
-          provide: ConfigService,
-          useValue: {
-            get: jest.fn(
-              (_key: string, defaultValue?: unknown) => defaultValue,
-            ),
-          },
-        },
+        { provide: AvatarStorageService, useValue: avatarStorageService },
       ],
     }).compile();
 
@@ -113,11 +106,10 @@ describe('UsersService', () => {
     repository = module.get(getRepositoryToken(User));
 
     (argon2.hash as jest.Mock).mockResolvedValue('hashed-password');
-    (unlink as jest.Mock).mockClear();
-    (writeFile as jest.Mock).mockClear();
-    // Most tests don't care about avatar content validation — only the
-    // `updateAvatar` tests that specifically exercise it override this.
-    (matchesImageSignature as jest.Mock).mockClear().mockReturnValue(true);
+  });
+
+  afterEach(async () => {
+    await module.close();
   });
 
   it('creates a user and its address in the same transaction, never returning the password', async () => {
@@ -230,6 +222,84 @@ describe('UsersService', () => {
     });
   });
 
+  describe('findByIdBasic', () => {
+    it('selects only id, name and email', async () => {
+      repository.findOne.mockResolvedValue({
+        id: 'user-1',
+        name: 'Ana Silva',
+        email: 'ana@example.com',
+      } as User);
+
+      const result = await service.findByIdBasic('user-1');
+
+      expect(repository.findOne).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: ['id', 'name', 'email'],
+      });
+      expect(result).toMatchObject({ id: 'user-1', name: 'Ana Silva' });
+    });
+
+    it('queries through the given manager instead of the injected repository when provided', async () => {
+      const managerRepository = { findOne: jest.fn().mockResolvedValue(null) };
+      const scopedManager = {
+        getRepository: jest.fn().mockReturnValue(managerRepository),
+      } as unknown as import('typeorm').EntityManager;
+
+      await service.findByIdBasic('user-1', scopedManager);
+
+      expect(managerRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: ['id', 'name', 'email'],
+      });
+      expect(repository.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findByEmailOrCpf', () => {
+    it('looks up by email when the identifier contains "@"', async () => {
+      repository.findOne.mockResolvedValue(null);
+
+      await service.findByEmailOrCpf('ana@example.com');
+
+      expect(repository.findOne).toHaveBeenCalledWith({
+        where: { email: 'ana@example.com' },
+        select: ['id', 'name', 'email'],
+      });
+    });
+
+    it('looks up by CPF (digits only) when the identifier has no "@"', async () => {
+      repository.findOne.mockResolvedValue(null);
+
+      await service.findByEmailOrCpf('529.982.247-25');
+
+      expect(repository.findOne).toHaveBeenCalledWith({
+        where: { cpf: '52998224725' },
+        select: ['id', 'name', 'email'],
+      });
+    });
+  });
+
+  describe('findNamesByIds', () => {
+    it('returns a map of id to name', async () => {
+      repository.find.mockResolvedValue([
+        { id: 'user-1', name: 'Ana Silva' },
+        { id: 'user-2', name: 'João Souza' },
+      ] as User[]);
+
+      const result = await service.findNamesByIds(['user-1', 'user-2']);
+
+      expect(result.get('user-1')).toBe('Ana Silva');
+      expect(result.get('user-2')).toBe('João Souza');
+    });
+
+    it('returns an empty map without querying when given no ids', async () => {
+      const result = await service.findNamesByIds([]);
+
+      expect(result.size).toBe(0);
+      expect(repository.find).not.toHaveBeenCalled();
+    });
+  });
+
   describe('update', () => {
     function buildUser(overrides: Partial<User> = {}): User {
       return {
@@ -318,19 +388,20 @@ describe('UsersService', () => {
   });
 
   describe('updateAvatar', () => {
-    const fileBuffer = Buffer.from('fake-jpeg-bytes');
-
     function buildUploadedFile(
       overrides: Partial<Express.Multer.File> = {},
     ): Express.Multer.File {
       return {
         mimetype: 'image/jpeg',
-        buffer: fileBuffer,
+        buffer: Buffer.from('fake-jpeg-bytes'),
         ...overrides,
       } as Express.Multer.File;
     }
 
-    it('validates content, writes the file, deletes the previous avatar and audits the change', async () => {
+    it('saves the file via AvatarStorageService, deletes the previous avatar and audits the change', async () => {
+      avatarStorageService.save.mockResolvedValueOnce(
+        '/uploads/avatars/new-generated.jpg',
+      );
       repository.findOne
         .mockResolvedValueOnce({
           id: 'user-1',
@@ -341,30 +412,18 @@ describe('UsersService', () => {
           avatarUrl: '/uploads/avatars/new-generated.jpg',
         } as User);
 
-      await service.updateAvatar('user-1', buildUploadedFile());
+      const file = buildUploadedFile();
+      await service.updateAvatar('user-1', file);
 
-      expect(matchesImageSignature).toHaveBeenCalledWith(
-        fileBuffer,
-        'image/jpeg',
-      );
-
-      // The saved filename is generated internally (randomUUID + a safe
-      // extension derived from the mimetype), never predictable from the
-      // request — read back whatever writeFile actually received instead
-      // of guessing it, then use that same value to confirm the DB update
-      // and audit trail point at the exact file that was written.
-      const [writtenPath, writtenBuffer] = (writeFile as jest.Mock).mock
-        .calls[0] as [string, Buffer];
-      expect(writtenPath).toMatch(/uploads[/\\]avatars[/\\].+\.jpg$/);
-      expect(writtenBuffer).toBe(fileBuffer);
-      const generatedFilename = writtenPath.split(/[/\\]/).pop();
-      const expectedAvatarUrl = `/uploads/avatars/${generatedFilename}`;
-
-      expect(unlink).toHaveBeenCalledWith(
-        expect.stringContaining('/uploads/avatars/old.jpg'),
+      // UsersService only orchestrates "what changes on the user row" —
+      // it hands the raw file to AvatarStorageService and trusts whatever
+      // URL comes back, never touching bytes or paths itself.
+      expect(avatarStorageService.save).toHaveBeenCalledWith(file);
+      expect(avatarStorageService.delete).toHaveBeenCalledWith(
+        '/uploads/avatars/old.jpg',
       );
       expect(repository.update).toHaveBeenCalledWith('user-1', {
-        avatarUrl: expectedAvatarUrl,
+        avatarUrl: '/uploads/avatars/new-generated.jpg',
       });
       expect(auditService.record).toHaveBeenCalledWith({
         userId: 'user-1',
@@ -372,7 +431,7 @@ describe('UsersService', () => {
         metadata: {
           avatarUrl: {
             before: '/uploads/avatars/old.jpg',
-            after: expectedAvatarUrl,
+            after: '/uploads/avatars/new-generated.jpg',
           },
         },
       });
@@ -388,15 +447,20 @@ describe('UsersService', () => {
 
       await service.updateAvatar('user-1', buildUploadedFile());
 
-      expect(unlink).not.toHaveBeenCalled();
+      expect(avatarStorageService.delete).not.toHaveBeenCalled();
     });
 
-    it('rejects without ever writing to disk when the content does not match the declared mimetype', async () => {
+    it('propagates the rejection from AvatarStorageService without touching the database', async () => {
       repository.findOne.mockResolvedValueOnce({
         id: 'user-1',
         avatarUrl: null,
       } as User);
-      (matchesImageSignature as jest.Mock).mockReturnValueOnce(false);
+      avatarStorageService.save.mockRejectedValueOnce(
+        new BadRequestException({
+          code: 'UNSUPPORTED_FILE_TYPE',
+          message: 'Unsupported file type',
+        }),
+      );
 
       await expect(
         service.updateAvatar('user-1', buildUploadedFile()),
@@ -404,24 +468,23 @@ describe('UsersService', () => {
         response: { code: 'UNSUPPORTED_FILE_TYPE' },
       });
 
-      expect(writeFile).not.toHaveBeenCalled();
-      expect(unlink).not.toHaveBeenCalled();
       expect(repository.update).not.toHaveBeenCalled();
+      expect(avatarStorageService.delete).not.toHaveBeenCalled();
     });
 
-    it('rejects when the user does not exist, without checking the file content', async () => {
+    it('rejects when the user does not exist, without calling AvatarStorageService', async () => {
       repository.findOne.mockResolvedValueOnce(null);
 
       await expect(
         service.updateAvatar('missing-id', buildUploadedFile()),
       ).rejects.toThrow();
 
-      expect(matchesImageSignature).not.toHaveBeenCalled();
+      expect(avatarStorageService.save).not.toHaveBeenCalled();
     });
   });
 
   describe('removeAvatar', () => {
-    it('deletes the file, clears the column and audits the removal', async () => {
+    it('deletes the file via AvatarStorageService, clears the column and audits the removal', async () => {
       repository.findOne
         .mockResolvedValueOnce({
           id: 'user-1',
@@ -431,8 +494,8 @@ describe('UsersService', () => {
 
       await service.removeAvatar('user-1');
 
-      expect(unlink).toHaveBeenCalledWith(
-        expect.stringContaining('/uploads/avatars/old.jpg'),
+      expect(avatarStorageService.delete).toHaveBeenCalledWith(
+        '/uploads/avatars/old.jpg',
       );
       expect(repository.update).toHaveBeenCalledWith('user-1', {
         avatarUrl: null,
@@ -444,6 +507,16 @@ describe('UsersService', () => {
           avatarUrl: { before: '/uploads/avatars/old.jpg', after: null },
         },
       });
+    });
+
+    it('does not call delete when there was no previous avatar', async () => {
+      repository.findOne
+        .mockResolvedValueOnce({ id: 'user-1', avatarUrl: null } as User)
+        .mockResolvedValueOnce({ id: 'user-1', avatarUrl: null } as User);
+
+      await service.removeAvatar('user-1');
+
+      expect(avatarStorageService.delete).not.toHaveBeenCalled();
     });
 
     it('rejects when the user does not exist', async () => {

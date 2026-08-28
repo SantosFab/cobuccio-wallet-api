@@ -91,10 +91,7 @@ describe('Auth (e2e)', () => {
 
   it('rejects login with a generic message when credentials are wrong', async () => {
     const payload = buildSignupPayload();
-    await request(app.getHttpServer())
-      .post('/users')
-      .send(payload)
-      .expect(201);
+    await request(app.getHttpServer()).post('/users').send(payload).expect(201);
 
     const response = await request(app.getHttpServer())
       .post('/auth/login')
@@ -106,10 +103,7 @@ describe('Auth (e2e)', () => {
 
   it('supports signup -> login -> /auth/me -> refresh rotation, and rejects reuse of the rotated-out token', async () => {
     const payload = buildSignupPayload();
-    await request(app.getHttpServer())
-      .post('/users')
-      .send(payload)
-      .expect(201);
+    await request(app.getHttpServer()).post('/users').send(payload).expect(201);
 
     const agent = request.agent(app.getHttpServer());
 
@@ -156,10 +150,7 @@ describe('Auth (e2e)', () => {
 
   it('logout revokes the refresh token so it can no longer be used to get a new session', async () => {
     const payload = buildSignupPayload();
-    await request(app.getHttpServer())
-      .post('/users')
-      .send(payload)
-      .expect(201);
+    await request(app.getHttpServer()).post('/users').send(payload).expect(201);
 
     const agent = request.agent(app.getHttpServer());
     await agent

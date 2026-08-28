@@ -3,7 +3,9 @@
 // convert back.
 function toCents(amount: string): number {
   const isNegative = amount.startsWith('-');
-  const [wholePart, fractionalPart = '0'] = amount.slice(isNegative ? 1 : 0).split('.');
+  const [wholePart, fractionalPart = '0'] = amount
+    .slice(isNegative ? 1 : 0)
+    .split('.');
   const cents =
     Number(wholePart) * 100 + Number(fractionalPart.padEnd(2, '0').slice(0, 2));
   return isNegative ? -cents : cents;

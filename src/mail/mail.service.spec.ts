@@ -1,16 +1,17 @@
 import { MailerService } from '@nestjs-modules/mailer';
-import { Test } from '@nestjs/testing';
+import { Test, TestingModule } from '@nestjs/testing';
 
 import { MailService } from './mail.service';
 
 describe('MailService', () => {
   let service: MailService;
   let mailerService: { sendMail: jest.Mock };
+  let module: TestingModule;
 
   beforeEach(async () => {
     mailerService = { sendMail: jest.fn().mockResolvedValue(undefined) };
 
-    const module = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         MailService,
         { provide: MailerService, useValue: mailerService },
@@ -18,6 +19,10 @@ describe('MailService', () => {
     }).compile();
 
     service = module.get(MailService);
+  });
+
+  afterEach(async () => {
+    await module.close();
   });
 
   describe('sendWelcomeEmail', () => {

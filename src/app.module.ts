@@ -14,10 +14,15 @@ import { WalletsModule } from './wallets/wallets.module';
 // The environment name is only known at runtime, so this can't be a
 // static `import` — it has to be a dynamic `require`.
 function loadEnvironmentConfig(): DeepPartial<IAppConfig> {
+  // Only production has a dedicated config file. Everything else —
+  // local development, and "test" (which Jest sets on process.env.NODE_ENV
+  // automatically, whether or not anything in this project asked for it)
+  // — runs against the same local setup config.development.ts covers.
+  const environmentName =
+    process.env.NODE_ENV === 'production' ? 'production' : 'development';
+
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const environmentConfig = require(
-    `./config.${process.env.NODE_ENV || 'development'}`,
-  ) as {
+  const environmentConfig = require(`./config.${environmentName}`) as {
     default: DeepPartial<IAppConfig>;
   };
 

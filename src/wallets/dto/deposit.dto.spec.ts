@@ -1,7 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 
-import { DepositDto } from './deposit.dto';
+import { DepositDto, MAX_AMOUNT } from './deposit.dto';
 
 function buildPayload(overrides: Partial<DepositDto> = {}) {
   return {
@@ -63,5 +63,39 @@ describe('DepositDto', () => {
     const errors = await validate(dto);
 
     expect(errors.some((error) => error.property === 'cardExpiry')).toBe(true);
+  });
+
+  it('accepts an amount right at the maximum', async () => {
+    const dto = plainToInstance(
+      DepositDto,
+      buildPayload({ amount: MAX_AMOUNT }),
+    );
+
+    const errors = await validate(dto);
+
+    expect(errors).toHaveLength(0);
+  });
+
+  // Regression test: an absurd finite amount used to pass validation and
+  // break money.util.ts's arithmetic — amount.toFixed(2) silently
+  // switches to exponential notation above 1e21, producing a broken
+  // decimal string instead of a clean validation error.
+  it('rejects an amount above the maximum', async () => {
+    const dto = plainToInstance(
+      DepositDto,
+      buildPayload({ amount: MAX_AMOUNT + 0.01 }),
+    );
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'amount')).toBe(true);
+  });
+
+  it('rejects an absurdly large amount that would break money.util.ts arithmetic', async () => {
+    const dto = plainToInstance(DepositDto, buildPayload({ amount: 1e21 }));
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'amount')).toBe(true);
   });
 });

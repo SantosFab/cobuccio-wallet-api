@@ -2,7 +2,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
+import { Test, TestingModule } from '@nestjs/testing';
 import * as argon2 from 'argon2';
 import { Repository } from 'typeorm';
 
@@ -39,11 +39,9 @@ describe('AuthService', () => {
   >;
   let jwtService: jest.Mocked<Pick<JwtService, 'sign'>>;
   let refreshTokenRepository: jest.Mocked<
-    Pick<
-      Repository<RefreshToken>,
-      'findOne' | 'update' | 'create' | 'save'
-    >
+    Pick<Repository<RefreshToken>, 'findOne' | 'update' | 'create' | 'save'>
   >;
+  let module: TestingModule;
 
   beforeEach(async () => {
     usersService = {
@@ -54,12 +52,12 @@ describe('AuthService', () => {
     refreshTokenRepository = {
       findOne: jest.fn(),
       update: jest.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TypeORM's overloaded create() signature doesn't unify with jest.fn()'s inferred type.
+
       create: jest.fn((data) => data as RefreshToken) as any,
       save: jest.fn().mockResolvedValue(undefined),
     };
 
-    const module = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: UsersService, useValue: usersService },
@@ -78,13 +76,17 @@ describe('AuthService', () => {
     (argon2.verify as jest.Mock).mockReset();
   });
 
+  afterEach(async () => {
+    await module.close();
+  });
+
   describe('login', () => {
     it('issues tokens when the password matches', async () => {
       const user = buildSafeUser();
       usersService.findByEmailWithPassword.mockResolvedValue({
         ...user,
         password: 'hashed-password',
-      } as never);
+      });
       (argon2.verify as jest.Mock).mockResolvedValue(true);
 
       const session = await service.login({
@@ -120,7 +122,7 @@ describe('AuthService', () => {
       usersService.findByEmailWithPassword.mockResolvedValue({
         ...buildSafeUser(),
         password: 'hashed-password',
-      } as never);
+      });
       (argon2.verify as jest.Mock).mockResolvedValue(false);
 
       await expect(
@@ -150,9 +152,9 @@ describe('AuthService', () => {
         createdAt: new Date(),
       });
 
-      await expect(
-        service.refresh('stolen-token'),
-      ).rejects.toMatchObject({ response: { code: 'REFRESH_TOKEN_REUSED' } });
+      await expect(service.refresh('stolen-token')).rejects.toMatchObject({
+        response: { code: 'REFRESH_TOKEN_REUSED' },
+      });
 
       expect(refreshTokenRepository.update).toHaveBeenCalledWith(
         { userId: 'user-1', revokedAt: expect.anything() },
@@ -170,9 +172,9 @@ describe('AuthService', () => {
         createdAt: new Date(),
       });
 
-      await expect(
-        service.refresh('expired-token'),
-      ).rejects.toMatchObject({ response: { code: 'REFRESH_TOKEN_EXPIRED' } });
+      await expect(service.refresh('expired-token')).rejects.toMatchObject({
+        response: { code: 'REFRESH_TOKEN_EXPIRED' },
+      });
     });
 
     it('rejects when the token has not been used for longer than the inactivity limit', async () => {
@@ -187,9 +189,9 @@ describe('AuthService', () => {
         createdAt: fourDaysAgo,
       });
 
-      await expect(
-        service.refresh('inactive-token'),
-      ).rejects.toMatchObject({ response: { code: 'REFRESH_TOKEN_INACTIVE' } });
+      await expect(service.refresh('inactive-token')).rejects.toMatchObject({
+        response: { code: 'REFRESH_TOKEN_INACTIVE' },
+      });
       expect(refreshTokenRepository.update).not.toHaveBeenCalled();
     });
 
@@ -207,10 +209,9 @@ describe('AuthService', () => {
 
       const session = await service.refresh('valid-token');
 
-      expect(refreshTokenRepository.update).toHaveBeenCalledWith(
-        existing.id,
-        { revokedAt: expect.any(Date) },
-      );
+      expect(refreshTokenRepository.update).toHaveBeenCalledWith(existing.id, {
+        revokedAt: expect.any(Date),
+      });
       // The absolute expiration carries forward unchanged on rotation —
       // issueTokens must not calculate a fresh one, or an active user
       // would refresh forever and the 7-day cap would never apply.
@@ -227,7 +228,10 @@ describe('AuthService', () => {
       await service.logout('some-token');
 
       expect(refreshTokenRepository.update).toHaveBeenCalledWith(
-        { tokenHash: hashRefreshToken('some-token'), revokedAt: expect.anything() },
+        {
+          tokenHash: hashRefreshToken('some-token'),
+          revokedAt: expect.anything(),
+        },
         { revokedAt: expect.any(Date) },
       );
     });

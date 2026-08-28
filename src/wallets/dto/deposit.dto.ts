@@ -12,7 +12,7 @@ import {
 // finite value (e.g. 1e21) can't reach the money.util.ts arithmetic,
 // where amount.toFixed(2) silently switches to exponential notation and
 // produces a broken decimal string instead of a clean validation error.
-const MAX_AMOUNT = 1_000_000_000;
+export const MAX_AMOUNT = 1_000_000_000;
 
 export class DepositDto {
   @IsNumber({ maxDecimalPlaces: 2 })

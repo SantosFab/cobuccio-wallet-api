@@ -1,7 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 
-import { CreateUserDto } from './create-user.dto';
+import { CreateUserDto, MAX_MONTHLY_INCOME } from './create-user.dto';
 
 function buildValidPayload(): Record<string, unknown> {
   return {
@@ -76,5 +76,65 @@ describe('CreateUserDto', () => {
     expect(
       addressError?.children?.some((child) => child.property === 'state'),
     ).toBe(true);
+  });
+
+  it('rejects a name longer than the "name" column (varchar(150))', async () => {
+    const dto = plainToInstance(CreateUserDto, {
+      ...buildValidPayload(),
+      name: 'A'.repeat(151),
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'name')).toBe(true);
+  });
+
+  it('rejects an email longer than the "email" column (varchar(255))', async () => {
+    const dto = plainToInstance(CreateUserDto, {
+      ...buildValidPayload(),
+      email: `${'a'.repeat(250)}@example.com`,
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'email')).toBe(true);
+  });
+
+  it('accepts a monthly income right at the maximum', async () => {
+    const dto = plainToInstance(CreateUserDto, {
+      ...buildValidPayload(),
+      monthlyIncome: MAX_MONTHLY_INCOME,
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects a monthly income above the maximum', async () => {
+    const dto = plainToInstance(CreateUserDto, {
+      ...buildValidPayload(),
+      monthlyIncome: MAX_MONTHLY_INCOME + 0.01,
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'monthlyIncome')).toBe(
+      true,
+    );
+  });
+
+  // Caps input size before it ever reaches argon2 — hashing cost scales
+  // with input length, so an unbounded password is a cheap CPU-exhaustion
+  // vector.
+  it('rejects a password longer than 128 characters', async () => {
+    const dto = plainToInstance(CreateUserDto, {
+      ...buildValidPayload(),
+      password: `Aa1${'a'.repeat(126)}`, // 129 chars, still otherwise valid
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'password')).toBe(true);
   });
 });

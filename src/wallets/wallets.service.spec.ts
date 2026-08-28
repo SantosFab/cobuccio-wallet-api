@@ -1,11 +1,11 @@
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
+import { Test, TestingModule } from '@nestjs/testing';
 import { DataSource, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
 import { MailService } from '../mail/mail.service';
-import { User } from '../users/entities/user.entity';
+import { UsersService } from '../users/users.service';
 import { WalletTransaction } from './entities/wallet-transaction.entity';
 import { Wallet } from './entities/wallet.entity';
 import { WalletsService } from './wallets.service';
@@ -34,6 +34,12 @@ describe('WalletsService', () => {
     sendMoneyReceivedEmail: jest.Mock;
     sendMoneySentEmail: jest.Mock;
   };
+  let usersService: {
+    findByIdBasic: jest.Mock;
+    findByEmailOrCpf: jest.Mock;
+    findNamesByIds: jest.Mock;
+  };
+  let module: TestingModule;
 
   beforeEach(async () => {
     manager = {
@@ -53,11 +59,21 @@ describe('WalletsService', () => {
     transactionsRepository = { find: jest.fn() };
     auditService = { record: jest.fn() };
     mailService = {
-      sendMoneyReceivedEmail: jest.fn(),
-      sendMoneySentEmail: jest.fn(),
+      sendMoneyReceivedEmail: jest.fn().mockResolvedValue(undefined),
+      sendMoneySentEmail: jest.fn().mockResolvedValue(undefined),
+    };
+    // User lookups now go through UsersService (findByIdBasic /
+    // findByEmailOrCpf / findNamesByIds) instead of `manager.findOne(User,
+    // ...)` directly — WalletsService no longer reaches into the User
+    // table itself, so `manager.findOne` mocks below only ever need to
+    // handle Wallet/WalletTransaction lookups.
+    usersService = {
+      findByIdBasic: jest.fn(),
+      findByEmailOrCpf: jest.fn(),
+      findNamesByIds: jest.fn().mockResolvedValue(new Map()),
     };
 
-    const module = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         WalletsService,
         { provide: getRepositoryToken(Wallet), useValue: walletsRepository },
@@ -68,10 +84,15 @@ describe('WalletsService', () => {
         { provide: DataSource, useValue: dataSource },
         { provide: AuditService, useValue: auditService },
         { provide: MailService, useValue: mailService },
+        { provide: UsersService, useValue: usersService },
       ],
     }).compile();
 
     service = module.get(WalletsService);
+  });
+
+  afterEach(async () => {
+    await module.close();
   });
 
   describe('deposit', () => {
@@ -84,14 +105,12 @@ describe('WalletsService', () => {
             balance: '-50.00',
           });
         }
-        if (entityClass === User) {
-          return Promise.resolve({
-            id: 'user-1',
-            name: 'Ana Silva',
-            email: 'ana@example.com',
-          });
-        }
         return Promise.resolve(null);
+      });
+      usersService.findByIdBasic.mockResolvedValue({
+        id: 'user-1',
+        name: 'Ana Silva',
+        email: 'ana@example.com',
       });
     }
 
@@ -175,26 +194,27 @@ describe('WalletsService', () => {
       id: 'user-a',
       email: 'a@example.com',
       name: 'Sender A',
-    } as User;
+    };
     const recipientUser = {
       id: 'user-b',
       email: 'b@example.com',
       name: 'Recipient B',
-    } as User;
+    };
 
     function mockUsersAndWallets(
       senderWallet: Wallet,
       recipientWallet: Wallet,
     ) {
+      usersService.findByIdBasic.mockImplementation((id: string) =>
+        Promise.resolve(id === senderUser.id ? senderUser : null),
+      );
+      usersService.findByEmailOrCpf.mockImplementation((identifier: string) =>
+        Promise.resolve(
+          identifier === recipientUser.email ? recipientUser : null,
+        ),
+      );
       manager.findOne.mockImplementation(
         (entityClass: unknown, options: { where: Record<string, unknown> }) => {
-          if (entityClass === User) {
-            if (options.where.id === senderUser.id)
-              return Promise.resolve(senderUser);
-            if (options.where.email === recipientUser.email)
-              return Promise.resolve(recipientUser);
-            return Promise.resolve(null);
-          }
           if (entityClass === Wallet) {
             if (options.where.userId === senderUser.id)
               return Promise.resolve({ ...senderWallet });
@@ -241,15 +261,18 @@ describe('WalletsService', () => {
     });
 
     it('looks up the recipient by CPF when the identifier is not an email', async () => {
+      // The email/CPF-format branching itself is UsersService's own
+      // responsibility (see users.service.spec.ts) — from WalletsService's
+      // side, it only matters that whatever identifier the caller passed
+      // reaches findByEmailOrCpf unchanged.
+      usersService.findByIdBasic.mockImplementation((id: string) =>
+        Promise.resolve(id === senderUser.id ? senderUser : null),
+      );
+      usersService.findByEmailOrCpf.mockImplementation((identifier: string) =>
+        Promise.resolve(identifier === '529.982.247-25' ? recipientUser : null),
+      );
       manager.findOne.mockImplementation(
         (entityClass: unknown, options: { where: Record<string, unknown> }) => {
-          if (entityClass === User) {
-            if (options.where.id === senderUser.id)
-              return Promise.resolve(senderUser);
-            if (options.where.cpf === '52998224725')
-              return Promise.resolve(recipientUser);
-            return Promise.resolve(null);
-          }
           if (entityClass === Wallet) {
             if (options.where.userId === senderUser.id)
               return Promise.resolve({
@@ -295,16 +318,11 @@ describe('WalletsService', () => {
     });
 
     it('rejects transferring to yourself', async () => {
-      manager.findOne.mockImplementation(
-        (entityClass: unknown, options: { where: Record<string, unknown> }) => {
-          if (entityClass === User) {
-            if (options.where.id === senderUser.id)
-              return Promise.resolve(senderUser);
-            if (options.where.email === senderUser.email)
-              return Promise.resolve(senderUser);
-          }
-          return Promise.resolve(null);
-        },
+      usersService.findByIdBasic.mockImplementation((id: string) =>
+        Promise.resolve(id === senderUser.id ? senderUser : null),
+      );
+      usersService.findByEmailOrCpf.mockImplementation((identifier: string) =>
+        Promise.resolve(identifier === senderUser.email ? senderUser : null),
       );
 
       await expect(
@@ -318,14 +336,10 @@ describe('WalletsService', () => {
     });
 
     it('rejects when the recipient does not exist', async () => {
-      manager.findOne.mockImplementation(
-        (entityClass: unknown, options: { where: Record<string, unknown> }) => {
-          if (entityClass === User && options.where.id === senderUser.id) {
-            return Promise.resolve(senderUser);
-          }
-          return Promise.resolve(null);
-        },
+      usersService.findByIdBasic.mockImplementation((id: string) =>
+        Promise.resolve(id === senderUser.id ? senderUser : null),
       );
+      usersService.findByEmailOrCpf.mockResolvedValue(null);
 
       await expect(
         service.transfer('user-a', {
@@ -338,17 +352,17 @@ describe('WalletsService', () => {
     it('always locks wallets in ascending user-id order, regardless of who is the sender', async () => {
       // sender id ('user-z') sorts AFTER recipient id ('user-a') — the
       // lock order must still start with 'user-a', not with the sender.
-      const senderZ = { id: 'user-z', email: 'z@example.com' } as User;
-      const recipientA = { id: 'user-a', email: 'a2@example.com' } as User;
+      const senderZ = { id: 'user-z', email: 'z@example.com', name: 'Z' };
+      const recipientA = { id: 'user-a', email: 'a2@example.com', name: 'A' };
 
+      usersService.findByIdBasic.mockImplementation((id: string) =>
+        Promise.resolve(id === senderZ.id ? senderZ : null),
+      );
+      usersService.findByEmailOrCpf.mockImplementation((identifier: string) =>
+        Promise.resolve(identifier === recipientA.email ? recipientA : null),
+      );
       manager.findOne.mockImplementation(
         (entityClass: unknown, options: { where: Record<string, unknown> }) => {
-          if (entityClass === User) {
-            if (options.where.id === senderZ.id)
-              return Promise.resolve(senderZ);
-            if (options.where.email === recipientA.email)
-              return Promise.resolve(recipientA);
-          }
           if (entityClass === Wallet) {
             if (options.where.userId === senderZ.id)
               return Promise.resolve({
@@ -385,7 +399,53 @@ describe('WalletsService', () => {
   });
 
   describe('reverseTransaction', () => {
-    it('reverses a deposit and allows the balance to go negative', async () => {
+    it('reverses a deposit when the wallet still has enough balance to cover it', async () => {
+      const original = {
+        id: 'tx-1',
+        type: 'deposit',
+        status: 'completed',
+        amount: '50.00',
+        fromWalletId: null,
+        toWalletId: 'wallet-1',
+        initiatedByUserId: 'user-1',
+        reversalOfTransactionId: null,
+      };
+      manager.findOne.mockImplementation(
+        (entityClass: unknown, options: { where: Record<string, unknown> }) => {
+          if (entityClass === WalletTransaction)
+            return Promise.resolve(original);
+          if (entityClass === Wallet && options.where.id === 'wallet-1') {
+            return Promise.resolve({
+              id: 'wallet-1',
+              userId: 'user-1',
+              balance: '80.00',
+            });
+          }
+          return Promise.resolve(null);
+        },
+      );
+
+      const result = await service.reverseTransaction('user-1', 'tx-1');
+
+      expect(manager.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'wallet-1', balance: '30.00' }),
+      );
+      expect(manager.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'tx-1', status: 'reversed' }),
+      );
+      expect(result).toMatchObject({
+        type: 'reversal',
+        amount: '50.00',
+        fromWalletId: 'wallet-1',
+        toWalletId: null,
+        reversalOfTransactionId: 'tx-1',
+      });
+    });
+
+    // A reversal is blocked (never allowed to push a wallet negative) if
+    // whoever is losing money in the reversal has already spent it and
+    // can't cover the amount being taken back.
+    it('rejects reversing a deposit when the wallet no longer has enough balance to cover it', async () => {
       const original = {
         id: 'tx-1',
         type: 'deposit',
@@ -411,21 +471,12 @@ describe('WalletsService', () => {
         },
       );
 
-      const result = await service.reverseTransaction('user-1', 'tx-1');
-
-      expect(manager.save).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'wallet-1', balance: '-30.00' }),
+      await expect(
+        service.reverseTransaction('user-1', 'tx-1'),
+      ).rejects.toMatchObject({ response: { code: 'INSUFFICIENT_BALANCE' } });
+      expect(manager.save).not.toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'wallet-1' }),
       );
-      expect(manager.save).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'tx-1', status: 'reversed' }),
-      );
-      expect(result).toMatchObject({
-        type: 'reversal',
-        amount: '50.00',
-        fromWalletId: 'wallet-1',
-        toWalletId: null,
-        reversalOfTransactionId: 'tx-1',
-      });
     });
 
     describe('transfer reversal (recipient only, instant)', () => {
@@ -494,6 +545,21 @@ describe('WalletsService', () => {
             eventType: UserEventType.WalletReversalCompleted,
           }),
           manager,
+        );
+      });
+
+      it('rejects reversing a transfer when the recipient no longer has enough balance to cover it', async () => {
+        mockTransferTransaction(buildOriginal({ amount: '50.00' }));
+
+        // wallet-b (recipient) only has 30.00, less than the 50.00 being
+        // taken back.
+        await expect(
+          service.reverseTransaction('user-b', 'tx-2'),
+        ).rejects.toMatchObject({
+          response: { code: 'INSUFFICIENT_BALANCE' },
+        });
+        expect(manager.save).not.toHaveBeenCalledWith(
+          expect.objectContaining({ id: 'wallet-a' }),
         );
       });
 
@@ -582,6 +648,75 @@ describe('WalletsService', () => {
       await expect(
         service.reverseTransaction('user-1', 'missing-tx'),
       ).rejects.toMatchObject({ response: { code: 'TRANSACTION_NOT_FOUND' } });
+    });
+  });
+
+  describe('listTransactions', () => {
+    function buildTransaction(
+      overrides: Partial<WalletTransaction> = {},
+    ): WalletTransaction {
+      return {
+        id: 'tx-1',
+        type: 'transfer',
+        amount: '20.00',
+        status: 'completed',
+        fromWalletId: 'wallet-1',
+        toWalletId: 'wallet-2',
+        initiatedByUserId: 'user-1',
+        reversalOfTransactionId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        ...overrides,
+      } as WalletTransaction;
+    }
+
+    it('paginates via limit/offset and resolves the counterpart name', async () => {
+      walletsRepository.findOne.mockResolvedValue({
+        id: 'wallet-1',
+        userId: 'user-1',
+        balance: '100.00',
+      } as Wallet);
+      transactionsRepository.find.mockResolvedValue([buildTransaction()]);
+      walletsRepository.find.mockResolvedValue([
+        { id: 'wallet-2', userId: 'user-2', balance: '5.00' } as Wallet,
+      ]);
+      usersService.findNamesByIds.mockResolvedValue(
+        new Map([['user-2', 'Recipient B']]),
+      );
+
+      const result = await service.listTransactions('user-1', {
+        limit: 5,
+        offset: 0,
+      });
+
+      expect(transactionsRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 5, skip: 0 }),
+      );
+      expect(usersService.findNamesByIds).toHaveBeenCalledWith(['user-2']);
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'tx-1',
+          direction: 'debit',
+          counterpartName: 'Recipient B',
+        }),
+      ]);
+    });
+
+    it('does not look up any counterpart wallets or names when there are no transactions', async () => {
+      walletsRepository.findOne.mockResolvedValue({
+        id: 'wallet-1',
+        userId: 'user-1',
+        balance: '0.00',
+      } as Wallet);
+      transactionsRepository.find.mockResolvedValue([]);
+
+      const result = await service.listTransactions('user-1', {
+        limit: 5,
+        offset: 0,
+      });
+
+      expect(result).toEqual([]);
+      expect(walletsRepository.find).not.toHaveBeenCalled();
+      expect(usersService.findNamesByIds).toHaveBeenCalledWith([]);
     });
   });
 });

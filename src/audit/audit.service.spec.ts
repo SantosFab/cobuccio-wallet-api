@@ -1,5 +1,5 @@
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Test } from '@nestjs/testing';
+import { Test, TestingModule } from '@nestjs/testing';
 import { EntityManager, Repository } from 'typeorm';
 
 import { AuditService } from './audit.service';
@@ -9,6 +9,7 @@ import { UserEventType } from './user-event-type';
 describe('AuditService', () => {
   let service: AuditService;
   let repository: jest.Mocked<Pick<Repository<UserEvent>, 'create' | 'save'>>;
+  let module: TestingModule;
 
   beforeEach(async () => {
     repository = {
@@ -17,7 +18,7 @@ describe('AuditService', () => {
       save: jest.fn().mockResolvedValue(undefined),
     };
 
-    const module = await Test.createTestingModule({
+    module = await Test.createTestingModule({
       providers: [
         AuditService,
         { provide: getRepositoryToken(UserEvent), useValue: repository },
@@ -25,6 +26,10 @@ describe('AuditService', () => {
     }).compile();
 
     service = module.get(AuditService);
+  });
+
+  afterEach(async () => {
+    await module.close();
   });
 
   it('saves through the injected repository when no manager is given', async () => {

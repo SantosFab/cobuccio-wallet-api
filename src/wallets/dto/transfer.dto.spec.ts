@@ -1,7 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 
-import { TransferDto } from './transfer.dto';
+import { MAX_AMOUNT, TransferDto } from './transfer.dto';
 
 function buildValidPayload(): Record<string, unknown> {
   return { recipientIdentifier: 'ana@example.com', amount: 50 };
@@ -44,6 +44,39 @@ describe('TransferDto', () => {
     const dto = plainToInstance(TransferDto, {
       ...buildValidPayload(),
       amount: 0,
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'amount')).toBe(true);
+  });
+
+  it('accepts an amount right at the maximum', async () => {
+    const dto = plainToInstance(TransferDto, {
+      ...buildValidPayload(),
+      amount: MAX_AMOUNT,
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects an amount above the maximum', async () => {
+    const dto = plainToInstance(TransferDto, {
+      ...buildValidPayload(),
+      amount: MAX_AMOUNT + 0.01,
+    });
+
+    const errors = await validate(dto);
+
+    expect(errors.some((error) => error.property === 'amount')).toBe(true);
+  });
+
+  it('rejects an absurdly large amount that would break money.util.ts arithmetic', async () => {
+    const dto = plainToInstance(TransferDto, {
+      ...buildValidPayload(),
+      amount: 1e21,
     });
 
     const errors = await validate(dto);

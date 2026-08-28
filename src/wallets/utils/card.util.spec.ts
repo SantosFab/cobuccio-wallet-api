@@ -9,9 +9,9 @@ function futureExpiry(): string {
 describe('card.util', () => {
   describe('isValidTestCard', () => {
     it('accepts the test card number with a valid cvv and future expiry', () => {
-      expect(
-        isValidTestCard('4242424242424242', '123', futureExpiry()),
-      ).toBe(true);
+      expect(isValidTestCard('4242424242424242', '123', futureExpiry())).toBe(
+        true,
+      );
     });
 
     it('accepts the card number formatted with spaces', () => {
@@ -21,24 +21,22 @@ describe('card.util', () => {
     });
 
     it('rejects any other card number', () => {
-      expect(
-        isValidTestCard('1111111111111111', '123', futureExpiry()),
-      ).toBe(false);
+      expect(isValidTestCard('1111111111111111', '123', futureExpiry())).toBe(
+        false,
+      );
     });
 
     it('rejects a cvv that is not exactly 3 digits', () => {
-      expect(
-        isValidTestCard('4242424242424242', '12', futureExpiry()),
-      ).toBe(false);
-      expect(
-        isValidTestCard('4242424242424242', '1234', futureExpiry()),
-      ).toBe(false);
+      expect(isValidTestCard('4242424242424242', '12', futureExpiry())).toBe(
+        false,
+      );
+      expect(isValidTestCard('4242424242424242', '1234', futureExpiry())).toBe(
+        false,
+      );
     });
 
     it('rejects a malformed expiry', () => {
-      expect(
-        isValidTestCard('4242424242424242', '123', '2030-01'),
-      ).toBe(false);
+      expect(isValidTestCard('4242424242424242', '123', '2030-01')).toBe(false);
     });
 
     it('rejects an invalid month', () => {

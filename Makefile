@@ -35,6 +35,21 @@ else
 	SED_INPLACE := sed -i
 endif
 
+# None of these targets produce a file matching their own name — without
+# this, `make test` (or `migration-run`, etc.) silently no-ops whenever a
+# file/dir with that exact name exists in the repo (e.g. the `test/`
+# directory holding the e2e specs), since Make then treats it as already
+# up to date instead of running the recipe.
+.PHONY: all versions check-docker \
+	database stop-database psql db-truncate db-drop \
+	mailhog stop-mailhog \
+	migration-generate migration-run migration-revert \
+	install \
+	test test-watch test-cov test-e2e \
+	build-dev up-dev stop-dev \
+	build up stop \
+	logs help
+
 check-docker:
 	@echo "Checking Docker and Docker Compose..."
 ifeq ($(DOCKER_CMD_PATH), no-docker)
@@ -106,6 +121,21 @@ migration-revert: versions ## Reverts the last migration
 install: ## Installs project dependencies locally (yarn, outside Docker)
 	@yarn install
 
+## --- Tests ---
+## Run directly on the host (like `make install`), not inside Docker.
+
+test: ## Runs unit tests
+	@yarn test
+
+test-watch: ## Runs unit tests in watch mode
+	@yarn test:watch
+
+test-cov: ## Runs unit tests with a coverage report
+	@yarn test:cov
+
+test-e2e: ## Runs end-to-end tests. Requires `make database` running first
+	@DATABASE_HOST=$(MIGRATION_DATABASE_HOST) yarn test:e2e
+
 ## --- Development ---
 
 build-dev: check-docker versions ## [dev] Builds the development image
@@ -137,7 +167,7 @@ help: versions ## Shows this help
 	@echo
 	@echo "Available commands:"
 	@echo
-	@sed -n -E -e 's|^([a-zA-Z_-]+):.+## (.+)|\1@\2|p' $(MAKEFILE_LIST) | column -s '@' -t
+	@sed -n -E -e 's|^([a-zA-Z0-9_-]+):.+## (.+)|\1@\2|p' $(MAKEFILE_LIST) | column -s '@' -t
 	@echo
 
 # vim: set ts=4 sw=4 tw=0 noet :
