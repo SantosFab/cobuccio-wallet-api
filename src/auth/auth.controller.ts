@@ -108,7 +108,11 @@ export class AuthController {
     @CurrentUser() authenticatedUser: AuthenticatedUser,
   ): Promise<AuthResponseUser> {
     const user = await this.usersService.findById(authenticatedUser.id);
-    if (!user) throw new NotFoundException();
+    if (!user)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
 
     return toAuthResponseUser(user);
   }

@@ -36,7 +36,11 @@ export class UsersController {
   @Get('me')
   async getMe(@CurrentUser() user: AuthenticatedUser): Promise<SafeUser> {
     const found = await this.usersService.findById(user.id);
-    if (!found) throw new NotFoundException();
+    if (!found)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
     return found;
   }
 

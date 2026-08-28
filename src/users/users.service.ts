@@ -271,7 +271,11 @@ export class UsersService {
           where: { id: userId },
           relations: ['address'],
         });
-        if (!user) throw new NotFoundException();
+        if (!user)
+          throw new NotFoundException({
+            code: 'USER_NOT_FOUND',
+            message: 'User not found',
+          });
 
         // Only fields whose value actually differs from what's already
         // stored end up in the audit trail — resending the same email,
@@ -349,7 +353,11 @@ export class UsersService {
     this.logger.log('[users-service] - profile updated successfully.');
 
     const updated = await this.findById(userId);
-    if (!updated) throw new NotFoundException();
+    if (!updated)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
     return updated;
   }
 
@@ -358,7 +366,11 @@ export class UsersService {
     file: Express.Multer.File,
   ): Promise<SafeUser> {
     const user = await this.usersRepository.findOne({ where: { id: userId } });
-    if (!user) throw new NotFoundException();
+    if (!user)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
 
     // Content validation (real bytes vs. declared mimetype) and disk I/O
     // both live in AvatarStorageService — this method only orchestrates
@@ -378,13 +390,21 @@ export class UsersService {
     this.logger.log('[users-service] - avatar updated successfully.');
 
     const updated = await this.findById(userId);
-    if (!updated) throw new NotFoundException();
+    if (!updated)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
     return updated;
   }
 
   async removeAvatar(userId: string): Promise<SafeUser> {
     const user = await this.usersRepository.findOne({ where: { id: userId } });
-    if (!user) throw new NotFoundException();
+    if (!user)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
 
     if (user.avatarUrl) await this.avatarStorageService.delete(user.avatarUrl);
 
@@ -399,7 +419,11 @@ export class UsersService {
     this.logger.log('[users-service] - avatar removed successfully.');
 
     const updated = await this.findById(userId);
-    if (!updated) throw new NotFoundException();
+    if (!updated)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
     return updated;
   }
 
@@ -422,7 +446,11 @@ export class UsersService {
       .addSelect('user.password')
       .where('user.id = :userId', { userId })
       .getOne();
-    if (!user) throw new NotFoundException();
+    if (!user)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
 
     const currentPasswordMatches = await argon2.verify(
       user.password,
@@ -463,7 +491,11 @@ export class UsersService {
       });
 
     const updated = await this.findById(userId);
-    if (!updated) throw new NotFoundException();
+    if (!updated)
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'User not found',
+      });
     return updated;
   }
 }
