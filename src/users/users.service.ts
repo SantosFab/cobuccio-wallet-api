@@ -12,7 +12,7 @@ import * as argon2 from 'argon2';
 import { randomUUID } from 'crypto';
 import { unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
@@ -42,6 +42,11 @@ function isUniqueViolation(
 }
 
 export type SafeUser = Omit<User, 'password'>;
+
+// Deliberately narrower than SafeUser — callers outside this module (e.g.
+// WalletsService, which never needs cpf/phone/monthlyIncome/address) get
+// only what they actually use, instead of the full user row.
+export type BasicUser = Pick<User, 'id' | 'name' | 'email'>;
 
 // The saved extension must never come from the client-supplied filename
 // — that field is fully attacker-controlled and independent of the
@@ -204,6 +209,59 @@ export class UsersService {
 
     const { password, ...safeUser } = user;
     return safeUser;
+  }
+
+  // For callers (e.g. WalletsService) that only need id/name/email and
+  // must run inside their own transaction — passing `manager` keeps this
+  // read on the same connection as the caller's locked rows, instead of a
+  // separate one from the injected repository.
+  async findByIdBasic(
+    id: string,
+    manager?: EntityManager,
+  ): Promise<BasicUser | null> {
+    const repository = manager
+      ? manager.getRepository(User)
+      : this.usersRepository;
+    return repository.findOne({
+      where: { id },
+      select: ['id', 'name', 'email'],
+    });
+  }
+
+  // Same identifier-sniffing rule as CreateUserDto validation: an "@"
+  // means e-mail, anything else is treated as a CPF (digits only).
+  async findByEmailOrCpf(
+    identifier: string,
+    manager?: EntityManager,
+  ): Promise<BasicUser | null> {
+    const repository = manager
+      ? manager.getRepository(User)
+      : this.usersRepository;
+    const trimmed = identifier.trim();
+
+    return trimmed.includes('@')
+      ? repository.findOne({
+          where: { email: trimmed },
+          select: ['id', 'name', 'email'],
+        })
+      : repository.findOne({
+          where: { cpf: trimmed.replace(/\D/g, '') },
+          select: ['id', 'name', 'email'],
+        });
+  }
+
+  // Bulk name lookup for read-side views that only need to display a
+  // counterpart's name (e.g. wallet transaction history) — returns a Map
+  // instead of an array so callers get an O(1) lookup instead of having
+  // to scan the result themselves.
+  async findNamesByIds(ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+
+    const users = await this.usersRepository.find({
+      where: { id: In(ids) },
+      select: ['id', 'name'],
+    });
+    return new Map(users.map((user) => [user.id, user.name]));
   }
 
   async update(userId: string, dto: UpdateUserDto): Promise<SafeUser> {

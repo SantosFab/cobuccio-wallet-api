@@ -12,7 +12,7 @@ import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { UserEventType } from '../audit/user-event-type';
 import { MailService } from '../mail/mail.service';
-import { User } from '../users/entities/user.entity';
+import { UsersService } from '../users/users.service';
 import { isValidTestCard } from './utils/card.util';
 import { DepositDto } from './dto/deposit.dto';
 import { TransferDto } from './dto/transfer.dto';
@@ -44,6 +44,7 @@ export class WalletsService {
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
     private readonly mailService: MailService,
+    private readonly usersService: UsersService,
   ) {}
 
   async getBalance(userId: string): Promise<Wallet> {
@@ -72,9 +73,10 @@ export class WalletsService {
         wallet.balance = addAmounts(wallet.balance, amount);
         await manager.save(wallet);
 
-        const depositorUser = await manager.findOne(User, {
-          where: { id: userId },
-        });
+        const depositorUser = await this.usersService.findByIdBasic(
+          userId,
+          manager,
+        );
 
         const transaction = manager.create(WalletTransaction, {
           type: 'deposit',
@@ -131,7 +133,7 @@ export class WalletsService {
       senderInfo,
       recipientInfo,
     } = await this.dataSource.transaction(async (manager) => {
-      const senderUser = await manager.findOne(User, { where: { id: userId } });
+      const senderUser = await this.usersService.findByIdBasic(userId, manager);
       if (!senderUser) {
         throw new NotFoundException({
           code: 'WALLET_NOT_FOUND',
@@ -139,12 +141,10 @@ export class WalletsService {
         });
       }
 
-      const identifier = dto.recipientIdentifier.trim();
-      const recipientUser = identifier.includes('@')
-        ? await manager.findOne(User, { where: { email: identifier } })
-        : await manager.findOne(User, {
-            where: { cpf: identifier.replace(/\D/g, '') },
-          });
+      const recipientUser = await this.usersService.findByEmailOrCpf(
+        dto.recipientIdentifier,
+        manager,
+      );
       if (!recipientUser) {
         throw new NotFoundException({
           code: 'RECIPIENT_NOT_FOUND',
@@ -462,18 +462,14 @@ export class WalletsService {
           where: { id: In(counterpartWalletIds) },
         })
       : [];
-    const counterpartUsers = counterpartWallets.length
-      ? await this.dataSource.getRepository(User).find({
-          where: { id: In(counterpartWallets.map((w) => w.userId)) },
-        })
-      : [];
+    const namesByUserId = await this.usersService.findNamesByIds(
+      counterpartWallets.map((w) => w.userId),
+    );
 
     const nameByWalletId = new Map<string, string>();
     for (const counterpartWallet of counterpartWallets) {
-      const user = counterpartUsers.find(
-        (candidate) => candidate.id === counterpartWallet.userId,
-      );
-      if (user) nameByWalletId.set(counterpartWallet.id, user.name);
+      const name = namesByUserId.get(counterpartWallet.userId);
+      if (name) nameByWalletId.set(counterpartWallet.id, name);
     }
 
     return transactions.map((transaction) => {
