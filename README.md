@@ -79,6 +79,11 @@ $ make migration-revert                      # reverts the last migration
 # dependencies
 $ make install                # installs project dependencies locally (yarn, outside Docker)
 
+# tests
+$ make test                   # runs unit tests
+$ make test-watch             # runs unit tests in watch mode
+$ make test-cov               # runs unit tests with a coverage report
+
 # development
 $ make build-dev               # [dev] builds the development image
 $ make up-dev                  # [dev] recreates the development container (hot reload) — Postgres is not touched
@@ -134,15 +139,28 @@ Responses:
 - `400 Bad Request` — validation error (invalid CPF, weak password, invalid UF, unknown field, etc.), e.g. `{ "statusCode": 400, "message": ["cpf must be a valid CPF number"], "error": "Bad Request" }`.
 - `409 Conflict` — email or CPF already registered, e.g. `{ "statusCode": 409, "code": "EMAIL_ALREADY_REGISTERED", "message": "This email is already registered" }` (`code` is also `CPF_ALREADY_REGISTERED`).
 
-## Run tests
+## Testing
+
+Install the dependencies and run the unit tests locally:
 
 ```bash
-# unit tests
-$ yarn test
+$ cp .env.example .env
+$ make install
 
-# e2e tests
-$ yarn test:e2e
+# run unit tests
+$ make test
 
-# test coverage
-$ yarn test:cov
+# run unit tests in watch mode
+$ make test-watch
+
+# run unit tests with coverage
+$ make test-cov
+```
+
+## Local Development
+
+Make sure the API is running, then start the development server:
+
+```bash
+$ yarn start:dev
 ```
